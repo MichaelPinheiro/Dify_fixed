@@ -9,7 +9,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@langgenius/dify-ui/popover'
-import { useHover } from 'ahooks'
 import { noop } from 'es-toolkit/function'
 import * as React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -29,6 +28,7 @@ import {
 } from './var-reference-vars.helpers'
 
 const VAR_SEARCH_INPUT_CLASS_NAME = 'var-search-input'
+const DEFAULT_OVERLAY_Z_INDEX = 1002
 
 const resolveValueSelector = ({
   itemData,
@@ -160,31 +160,11 @@ const Item: FC<ItemProps> = ({
     return objStructuredOutput
   })()
 
-  const itemRef = useRef<HTMLDivElement>(null)
-  const [isItemHovering, setIsItemHovering] = useState(false)
-  useHover(itemRef, {
-    onChange: (hovering) => {
-      if (hovering) {
-        setIsItemHovering(true)
-      }
-      else {
-        if (isObj || isStructureOutput) {
-          setTimeout(() => {
-            setIsItemHovering(false)
-          }, 100)
-        }
-        else {
-          setIsItemHovering(false)
-        }
-      }
-    },
-  })
-  const [isChildrenHovering, setIsChildrenHovering] = useState(false)
-  const isHovering = isItemHovering || isChildrenHovering
-  const open = (isObj || isStructureOutput) && isHovering
+  const [isExpanded, setIsExpanded] = useState(false)
+  const open = (isObj || isStructureOutput) && isExpanded
   useEffect(() => {
-    onHovering?.(isHovering)
-  }, [isHovering, onHovering])
+    onHovering?.(open)
+  }, [open, onHovering])
   const handleChosen = (e: React.MouseEvent) => {
     e.stopPropagation()
     e.nativeEvent.stopImmediatePropagation()
@@ -199,6 +179,14 @@ const Item: FC<ItemProps> = ({
     if (valueSelector)
       onChange(valueSelector, itemData)
   }
+  const handleToggleChildren = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    e.nativeEvent.stopImmediatePropagation()
+    setIsExpanded(prev => !prev)
+  }, [])
+
+  const isActive = open || isSelected
   const variableCategory = useMemo(
     () => getVariableCategory({ isEnv, isChatVar, isLoopVar, isRagVariable }),
     [isEnv, isChatVar, isLoopVar, isRagVariable],
@@ -206,13 +194,14 @@ const Item: FC<ItemProps> = ({
 
   const itemTrigger = (
     <div
-      ref={itemRef}
       className={cn(
         (isObj || isStructureOutput) ? 'pr-1' : 'pr-[18px]',
-        (isHovering || isSelected) && ((isObj || isStructureOutput) ? 'bg-components-panel-on-panel-item-bg-hover' : 'bg-state-base-hover'),
+        isActive && ((isObj || isStructureOutput) ? 'bg-components-panel-on-panel-item-bg-hover' : 'bg-state-base-hover'),
+        !isActive && ((isObj || isStructureOutput) ? 'hover:bg-components-panel-on-panel-item-bg-hover' : 'hover:bg-state-base-hover'),
         'relative flex h-6 w-full cursor-pointer items-center rounded-md pl-3',
         className,
       )}
+      data-component-picker-keep-open="true"
       data-selected={isSelected ? 'true' : 'false'}
       onClick={handleChosen}
       onMouseEnter={onActivate}
@@ -248,7 +237,27 @@ const Item: FC<ItemProps> = ({
       <div className="ml-1 shrink-0 text-xs font-normal text-text-tertiary capitalize">{(preferSchemaType && itemData.schemaType) ? itemData.schemaType : itemData.type}</div>
       {
         (isObj || isStructureOutput) && (
-          <span aria-hidden className={cn('ml-0.5 i-custom-vender-line-arrows-chevron-right h-3 w-3 text-text-quaternary', isHovering && 'text-text-tertiary')} />
+          <button
+            type="button"
+            aria-label={open ? 'Collapse sub-variables' : 'Expand sub-variables'}
+            aria-expanded={open}
+            data-component-picker-keep-open="true"
+            className="ml-0.5 flex h-5 w-5 items-center justify-center rounded text-text-quaternary hover:bg-black/5"
+            onClick={handleToggleChildren}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              e.nativeEvent.stopImmediatePropagation()
+            }}
+          >
+            <span
+              aria-hidden
+              className={cn(
+                'i-custom-vender-line-arrows-chevron-right h-3 w-3 transition-transform',
+                open && 'rotate-90 text-text-tertiary',
+              )}
+            />
+          </button>
         )
       }
     </div>
@@ -257,7 +266,10 @@ const Item: FC<ItemProps> = ({
   return (
     <Popover
       open={open}
-      onOpenChange={noop}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen)
+          setIsExpanded(false)
+      }}
     >
       <PopoverTrigger nativeButton={false} render={itemTrigger} />
       <PopoverContent
@@ -266,19 +278,20 @@ const Item: FC<ItemProps> = ({
         popupClassName="border-none bg-transparent p-0 shadow-none backdrop-blur-none"
         positionerProps={{
           style: {
-            zIndex: zIndex || 100,
+            zIndex: zIndex ?? DEFAULT_OVERLAY_Z_INDEX,
           },
         }}
       >
         {(isStructureOutput || isObj) && (
-          <PickerStructurePanel
-            root={{ nodeId, nodeName: title, attrName: itemData.variable, attrAlias: itemData.schemaType }}
-            payload={structuredOutput!}
-            onHovering={setIsChildrenHovering}
-            onSelect={(valueSelector) => {
-              onChange(valueSelector, itemData)
-            }}
-          />
+          <div data-component-picker-keep-open="true">
+            <PickerStructurePanel
+              root={{ nodeId, nodeName: title, attrName: itemData.variable, attrAlias: itemData.schemaType }}
+              payload={structuredOutput!}
+              onSelect={(valueSelector) => {
+                onChange(valueSelector, itemData)
+              }}
+            />
+          </div>
         )}
       </PopoverContent>
     </Popover>
@@ -338,9 +351,10 @@ const VarReferenceVars: FC<Props> = ({
 
     return filteredVars.map(node => ({
       ...node,
-      vars: node.vars.map(variable => ({
+      vars: node.vars.map((variable, variableIndex) => ({
         variable,
         optionIndex: optionIndex++,
+        optionKey: `${node.nodeId}:${variable.variable}:${variable.type}:${variable.schemaType ?? ''}:${variableIndex}`,
       })),
     }))
   }, [filteredVars])
@@ -475,9 +489,9 @@ const VarReferenceVars: FC<Props> = ({
                         {item.title}
                       </div>
                     )}
-                    {item.vars.map(({ variable, optionIndex }) => (
+                    {item.vars.map(({ variable, optionIndex, optionKey }) => (
                       <Item
-                        key={optionIndex}
+                        key={optionKey}
                         title={item.title}
                         nodeId={item.nodeId}
                         objPath={[]}

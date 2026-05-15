@@ -272,6 +272,39 @@ describe('VarReferenceVars', () => {
     }))
   })
 
+  it('should expand object sub-variables only when chevron is clicked', () => {
+    const onChange = vi.fn()
+
+    render(
+      <VarReferenceVars
+        hideSearch
+        vars={createVars([
+          {
+            title: 'Object vars',
+            nodeId: 'node-obj',
+            vars: [{
+              variable: 'payload',
+              type: VarType.object,
+              children: [{ variable: 'child', type: VarType.string }],
+            }],
+          },
+        ])}
+        onChange={onChange}
+      />,
+    )
+
+    expect(screen.queryByText('pick-child')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand sub-variables' }))
+    expect(screen.getByText('pick-child')).toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText('pick-child'))
+    expect(onChange).toHaveBeenCalledWith(['node-obj', 'payload', 'child'], expect.objectContaining({
+      variable: 'payload',
+    }))
+  })
+
   it('should filter by externally controlled search text and match child variables', () => {
     render(
       <VarReferenceVars

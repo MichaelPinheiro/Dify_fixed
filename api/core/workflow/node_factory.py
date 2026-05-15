@@ -37,6 +37,7 @@ from core.workflow.nodes.agent.plugin_strategy_adapter import (
     PluginAgentStrategyResolver,
 )
 from core.workflow.nodes.agent.runtime_support import AgentRuntimeSupport
+from core.workflow.nodes.llm import DifyLLMNode
 from core.workflow.system_variables import SystemVariableKey, get_system_text, system_variable_selector
 from core.workflow.template_rendering import CodeExecutorJinja2TemplateRenderer
 from extensions.ext_database import db
@@ -48,7 +49,7 @@ from graphon.graph.graph import NodeFactory
 from graphon.model_runtime.memory import PromptMessageMemory
 from graphon.model_runtime.model_providers.base.large_language_model import LargeLanguageModel
 from graphon.nodes.base.node import Node
-from graphon.nodes.code.code_node import WorkflowCodeExecutor
+from graphon.nodes.code.code_node import CodeExecutorProtocol
 from graphon.nodes.code.entities import CodeLanguage
 from graphon.nodes.code.limits import CodeNodeLimits
 from graphon.nodes.document_extractor import UnstructuredApiConfig
@@ -285,7 +286,7 @@ class DifyNodeFactory(NodeFactory):
         self.graph_init_params = graph_init_params
         self.graph_runtime_state = graph_runtime_state
         self._dify_context = self._resolve_dify_context(graph_init_params.run_context)
-        self._code_executor: WorkflowCodeExecutor = DefaultWorkflowCodeExecutor()
+        self._code_executor: CodeExecutorProtocol = DefaultWorkflowCodeExecutor()
         self._code_limits = CodeNodeLimits(
             max_string_length=dify_config.CODE_MAX_STRING_LENGTH,
             max_number=dify_config.CODE_MAX_NUMBER,
@@ -429,7 +430,7 @@ class DifyNodeFactory(NodeFactory):
                 include_jinja2_template_renderer=False,
             ),
             BuiltinNodeTypes.TOOL: lambda: {
-                "tool_file_manager_factory": self._bound_tool_file_manager_factory(),
+                "tool_file_manager": self._bound_tool_file_manager_factory(),
                 "runtime": self._tool_runtime,
             },
             BuiltinNodeTypes.AGENT: lambda: {
@@ -442,7 +443,7 @@ class DifyNodeFactory(NodeFactory):
         node_init_kwargs = node_init_kwargs_factories.get(node_type, lambda: {})()
         return node_class(
             node_id=node_id,
-            config=resolved_node_data,
+            data=resolved_node_data,
             graph_init_params=self.graph_init_params,
             graph_runtime_state=self.graph_runtime_state,
             **node_init_kwargs,
@@ -460,6 +461,8 @@ class DifyNodeFactory(NodeFactory):
 
     @staticmethod
     def _resolve_node_class(*, node_type: NodeType, node_version: str) -> type[Node]:
+        if node_type == BuiltinNodeTypes.LLM:
+            return DifyLLMNode
         return resolve_workflow_node_class(node_type=node_type, node_version=node_version)
 
     def _build_llm_compatible_node_init_kwargs(

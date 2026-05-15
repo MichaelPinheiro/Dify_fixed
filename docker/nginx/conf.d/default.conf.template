@@ -3,6 +3,7 @@
 server {
     listen ${NGINX_PORT};
     server_name ${NGINX_SERVER_NAME};
+    resolver 127.0.0.11 ipv6=off valid=10s;
 
     location /console/api {
       proxy_pass http://api:5001;
@@ -38,7 +39,8 @@ server {
     }
 
     location /e/ {
-      proxy_pass http://plugin_daemon:5002;
+      set $plugin_daemon_upstream plugin_daemon;
+      proxy_pass http://$plugin_daemon_upstream:5002$request_uri;
       proxy_set_header Dify-Hook-Url $scheme://$host$request_uri;
       include proxy.conf;
     }

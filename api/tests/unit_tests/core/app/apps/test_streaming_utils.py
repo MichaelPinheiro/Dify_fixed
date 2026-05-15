@@ -85,6 +85,7 @@ def test_normalize_terminal_events_defaults():
     assert _normalize_terminal_events(None) == {
         StreamEvent.WORKFLOW_FINISHED.value,
         StreamEvent.WORKFLOW_PAUSED.value,
+        StreamEvent.ERROR.value,
     }
 
 
@@ -126,5 +127,23 @@ def test_stream_topic_events_can_continue_past_pause():
     assert next(generator) == StreamEvent.PING.value
     assert next(generator)["event"] == StreamEvent.WORKFLOW_PAUSED.value
     assert next(generator)["event"] == StreamEvent.WORKFLOW_FINISHED.value
+    with pytest.raises(StopIteration):
+        next(generator)
+
+
+def test_stream_topic_events_stops_on_error_by_default():
+    topic = FakeTopic()
+    topic.publish(json.dumps({"event": StreamEvent.ERROR.value, "message": "failed"}).encode())
+    topic.publish(json.dumps({"event": StreamEvent.WORKFLOW_FINISHED.value}).encode())
+
+    generator = stream_topic_events(
+        topic=topic,
+        idle_timeout=1.0,
+    )
+
+    assert next(generator) == StreamEvent.PING.value
+    error_event = next(generator)
+    assert error_event["event"] == StreamEvent.ERROR.value
+
     with pytest.raises(StopIteration):
         next(generator)

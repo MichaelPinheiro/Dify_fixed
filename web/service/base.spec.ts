@@ -182,6 +182,54 @@ describe('handleStream', () => {
       expect(onCompleted).toHaveBeenCalledWith(true, 'Bad request')
     })
 
+    it('should handle error event and finish stream with error', async () => {
+      // Arrange
+      const onData = vi.fn()
+      const onCompleted = vi.fn()
+
+      const errorEvent = {
+        event: 'error',
+        message: 'Run failed',
+        code: 'workflow_failed',
+        conversation_id: 'conv-1',
+        message_id: 'msg-1',
+      }
+
+      const mockReader = {
+        read: vi.fn()
+          .mockResolvedValueOnce({
+            done: false,
+            value: new TextEncoder().encode(`data: ${JSON.stringify(errorEvent)}\n`),
+          })
+          .mockResolvedValueOnce({
+            done: true,
+            value: undefined,
+          }),
+      }
+
+      const mockResponse = {
+        ok: true,
+        body: {
+          getReader: () => mockReader,
+        },
+      } as unknown as Response
+
+      // Act
+      handleStream(mockResponse, onData, onCompleted)
+
+      // Wait for the stream to be processed
+      await new Promise(resolve => setTimeout(resolve, 50))
+
+      // Assert
+      expect(onData).toHaveBeenCalledWith('', false, {
+        conversationId: 'conv-1',
+        messageId: 'msg-1',
+        errorMessage: 'Run failed',
+        errorCode: 'workflow_failed',
+      })
+      expect(onCompleted).toHaveBeenCalledWith(true, 'Run failed')
+    })
+
     it('should handle malformed JSON gracefully', async () => {
       // Arrange
       const onData = vi.fn()

@@ -3,6 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from core.app.entities.app_invoke_entities import InvokeFrom
 from core.app.entities.queue_entities import QueueErrorEvent
 from core.app.task_pipeline.based_generate_task_pipeline import BasedGenerateTaskPipeline
 from core.errors.error import QuotaExceededError
@@ -18,7 +19,11 @@ class TestBasedGenerateTaskPipeline:
             app_id="app-1",
             sensitive_word_avoidance=None,
         )
-        app_generate_entity = SimpleNamespace(task_id="task-1", app_config=app_config)
+        app_generate_entity = SimpleNamespace(
+            task_id="task-1",
+            app_config=app_config,
+            invoke_from=InvokeFrom.SERVICE_API,
+        )
         return BasedGenerateTaskPipeline(
             application_generate_entity=app_generate_entity,
             queue_manager=Mock(),
@@ -58,6 +63,22 @@ class TestBasedGenerateTaskPipeline:
         session.scalar.return_value = None
 
         err = pipeline.handle_error(event=event, session=session, message_id="msg-1")
+
+        assert err is event.error
+
+    def test_handle_error_exposes_unknown_error_in_debugger(self, pipeline):
+        pipeline._application_generate_entity.invoke_from = InvokeFrom.DEBUGGER
+        event = QueueErrorEvent(error=RuntimeError("debug details"))
+
+        err = pipeline.handle_error(event=event)
+
+        assert isinstance(err, ValueError)
+        assert str(err) == "debug details"
+
+    def test_handle_error_preserves_unknown_error_outside_debugger(self, pipeline):
+        event = QueueErrorEvent(error=RuntimeError("hidden details"))
+
+        err = pipeline.handle_error(event=event)
 
         assert err is event.error
 

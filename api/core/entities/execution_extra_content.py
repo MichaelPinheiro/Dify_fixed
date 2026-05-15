@@ -5,7 +5,16 @@ from typing import Any, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from graphon.nodes.human_input.entities import FormInput, UserAction
+try:
+    from graphon.nodes.human_input.entities import FormInput, UserAction
+except ImportError:
+    # graphon>=0.4 renamed these models.
+    from graphon.nodes.human_input.entities import (
+        FormInputConfig as FormInput,
+    )
+    from graphon.nodes.human_input.entities import (
+        UserActionConfig as UserAction,
+    )
 from models.execution_extra_content import ExecutionContentType
 
 

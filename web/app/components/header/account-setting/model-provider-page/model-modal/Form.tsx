@@ -23,6 +23,7 @@ import ModelParameterModal from '@/app/components/plugins/plugin-detail-panel/mo
 import MultipleToolSelector from '@/app/components/plugins/plugin-detail-panel/multiple-tool-selector'
 import ToolSelector from '@/app/components/plugins/plugin-detail-panel/tool-selector'
 import VarReferencePicker from '@/app/components/workflow/nodes/_base/components/variable/var-reference-picker'
+import { VarType } from '@/app/components/workflow/types'
 import { ValidatingTip } from '../../key-validator/ValidateStatus'
 import { FormTypeEnum } from '../declarations'
 import { useLanguage } from '../hooks'
@@ -55,6 +56,71 @@ type FormProps<
   nodeId?: string
   nodeOutputVars?: NodeOutPutVar[]
   availableNodes?: Node[]
+}
+
+const CONTEXT_SCOPE_TYPES: readonly string[] = [
+  VarType.string,
+  VarType.number,
+  VarType.integer,
+  VarType.secret,
+  VarType.boolean,
+  VarType.object,
+  VarType.file,
+  VarType.array,
+  VarType.arrayString,
+  VarType.arrayNumber,
+  VarType.arrayObject,
+  VarType.arrayBoolean,
+  VarType.arrayFile,
+  VarType.any,
+  VarType.arrayAny,
+]
+
+const TEXT_SCOPE_TYPES: readonly string[] = [
+  'text',
+  VarType.string,
+  VarType.number,
+  VarType.integer,
+  VarType.secret,
+]
+
+const SCOPE_TOKEN_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  context: CONTEXT_SCOPE_TYPES,
+  contexts: CONTEXT_SCOPE_TYPES,
+  text: TEXT_SCOPE_TYPES,
+}
+
+const normalizeScopeToken = (token: string): string => token.replace(/\s+/g, '').toLowerCase()
+
+const resolveScopeVarTypes = (scope: string | undefined): ReadonlySet<string> | null => {
+  if (!scope)
+    return null
+
+  const tokens = scope
+    .split(/[,&/|]/)
+    .map(token => normalizeScopeToken(token))
+    .filter(Boolean)
+
+  if (!tokens.length || tokens.includes('any'))
+    return null
+
+  const allowedVarTypes = new Set<string>()
+  for (const token of tokens) {
+    const aliasedTokens = SCOPE_TOKEN_ALIASES[token]
+    if (aliasedTokens?.length) {
+      aliasedTokens.forEach(varType => allowedVarTypes.add(varType))
+      continue
+    }
+
+    if ((Object.values(VarType) as string[]).includes(token)) {
+      allowedVarTypes.add(token)
+      continue
+    }
+
+    allowedVarTypes.add(token)
+  }
+
+  return allowedVarTypes.size ? allowedVarTypes : null
 }
 
 function Form<
@@ -467,6 +533,7 @@ function Form<
         required,
         scope,
       } = formSchema as (CredentialFormSchemaTextInput | CredentialFormSchemaSecretInput)
+      const allowedVarTypes = resolveScopeVarTypes(scope)
 
       return (
         <div key={variable} className={cn(itemClassName, 'py-3')}>
@@ -485,9 +552,9 @@ function Form<
             value={value[variable] || []}
             onChange={item => handleFormChange(variable, item as any)}
             filterVar={(varPayload) => {
-              if (!scope)
+              if (!allowedVarTypes)
                 return true
-              return scope.split('&').includes(varPayload.type)
+              return allowedVarTypes.has(varPayload.type)
             }}
           />
           {fieldMoreInfo?.(formSchema)}

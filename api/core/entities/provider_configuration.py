@@ -23,6 +23,7 @@ from core.entities.provider_entities import (
 )
 from core.helper import encrypter
 from core.helper.model_provider_cache import ProviderCredentialsCache, ProviderCredentialsCacheType
+from core.model_provider_factory import ModelProviderFactory
 from core.plugin.impl.model_runtime_factory import create_plugin_model_provider_factory
 from graphon.model_runtime.entities.model_entities import AIModelEntity, FetchFrom, ModelType
 from graphon.model_runtime.entities.provider_entities import (
@@ -32,8 +33,7 @@ from graphon.model_runtime.entities.provider_entities import (
     ProviderEntity,
 )
 from graphon.model_runtime.model_providers.base.ai_model import AIModel
-from graphon.model_runtime.model_providers.model_provider_factory import ModelProviderFactory
-from graphon.model_runtime.runtime import ModelRuntime
+from graphon.model_runtime.protocols.runtime import ModelRuntime
 from libs.datetime_utils import naive_utc_now
 from models.engine import db
 from models.enums import CredentialSourceType
@@ -109,7 +109,7 @@ class ProviderConfiguration(BaseModel):
     def get_model_provider_factory(self) -> ModelProviderFactory:
         """Return a provider factory that preserves any request-bound runtime."""
         if self._bound_model_runtime is not None:
-            return ModelProviderFactory(model_runtime=self._bound_model_runtime)
+            return ModelProviderFactory(runtime=self._bound_model_runtime)
         return create_plugin_model_provider_factory(tenant_id=self.tenant_id)
 
     def get_current_credentials(self, model_type: ModelType, model: str) -> dict[str, Any] | None:

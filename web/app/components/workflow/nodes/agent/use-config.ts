@@ -15,7 +15,7 @@ import { VarType as VarKindType } from '../../types'
 import useAvailableVarList from '../_base/hooks/use-available-var-list'
 import useNodeCrud from '../_base/hooks/use-node-crud'
 import useVarList from '../_base/hooks/use-var-list'
-import { VarType } from '../tool/types'
+import { resolveAgentParameterInput } from './use-config.helpers'
 
 type StrategyStatus = {
   plugin: {
@@ -96,22 +96,16 @@ const useConfig = (id: string, payload: AgentNodeType) => {
     return res
   }, [inputs.agent_parameters, currentStrategy?.parameters])
 
-  const getParamVarType = useCallback((paramName: string) => {
-    const isVariable = currentStrategy?.parameters.some(
-      param => param.name === paramName && param.type === FormTypeEnum.any,
-    )
-    if (isVariable)
-      return VarType.variable
-    return VarType.constant
-  }, [currentStrategy?.parameters])
-
   const onFormChange = (value: Record<string, any>) => {
     const res: ToolVarInputs = {}
     Object.entries(value).forEach(([key, val]) => {
-      res[key] = {
-        type: getParamVarType(key),
+      const isAnyParameter = currentStrategy?.parameters.some(
+        param => param.name === key && param.type === FormTypeEnum.any,
+      )
+      res[key] = resolveAgentParameterInput({
+        isAnyParameter: !!isAnyParameter,
         value: val,
-      }
+      })
     })
     setInputs({
       ...inputs,

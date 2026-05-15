@@ -41,7 +41,7 @@ def init_tool_node(config: dict):
     )
 
     # construct variable pool
-    variable_pool = VariablePool(
+    variable_pool = VariablePool.from_bootstrap(
         system_variables=build_system_variables(user_id="aaa", files=[]),
         user_inputs={},
         environment_variables=[],
@@ -58,14 +58,14 @@ def init_tool_node(config: dict):
 
     graph = Graph.init(graph_config=graph_config, node_factory=node_factory, root_node_id="start")
 
-    tool_file_manager_factory = MagicMock(spec=ToolFileManagerProtocol)
+    tool_file_manager = MagicMock(spec=ToolFileManagerProtocol)
 
     node = ToolNode(
         node_id=str(uuid.uuid4()),
-        config=ToolNodeData.model_validate(config["data"]),
+        data=ToolNodeData.model_validate(config["data"]),
         graph_init_params=init_params,
         graph_runtime_state=graph_runtime_state,
-        tool_file_manager_factory=tool_file_manager_factory,
+        tool_file_manager=tool_file_manager,
         runtime=DifyToolNodeRuntime(init_params.run_context),
     )
     return node

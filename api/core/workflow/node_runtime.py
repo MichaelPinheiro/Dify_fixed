@@ -44,7 +44,7 @@ from graphon.model_runtime.entities.model_entities import AIModelEntity
 from graphon.model_runtime.model_providers.base.large_language_model import LargeLanguageModel
 from graphon.nodes.human_input.entities import HumanInputNodeData
 from graphon.nodes.llm.runtime_protocols import (
-    PreparedLLMProtocol,
+    LLMProtocol,
     PromptMessageSerializerProtocol,
     RetrieverAttachmentLoaderProtocol,
 )
@@ -81,6 +81,7 @@ if TYPE_CHECKING:
     from graphon.file import File
     from graphon.nodes.llm.file_saver import LLMFileSaver
     from graphon.nodes.tool.entities import ToolNodeData
+    from graphon.runtime.variable_pool import VariablePool
 
 
 _file_access_controller = DatabaseFileAccessController()
@@ -135,7 +136,7 @@ class DifyFileReferenceFactory(FileReferenceFactoryProtocol):
         )
 
 
-class DifyPreparedLLM(PreparedLLMProtocol):
+class DifyPreparedLLM(LLMProtocol):
     """Workflow-layer adapter that hides the full `ModelInstance` API from `graphon` nodes."""
 
     def __init__(self, model_instance: ModelInstance) -> None:
@@ -377,8 +378,11 @@ class DifyToolNodeRuntime(ToolNodeRuntimeProtocol):
         *,
         node_id: str,
         node_data: ToolNodeData,
-        variable_pool,
+        variable_pool: "VariablePool | None",
+        node_execution_id: str | None = None,
     ) -> ToolRuntimeHandle:
+        del node_execution_id
+
         try:
             tool_runtime = ToolManager.get_workflow_tool_runtime(
                 self._run_context.tenant_id,

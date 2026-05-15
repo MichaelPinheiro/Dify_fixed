@@ -10,7 +10,16 @@ from graphon.entities import WorkflowStartReason
 from graphon.entities.pause_reason import PauseReasonType
 from graphon.enums import WorkflowExecutionStatus, WorkflowNodeExecutionMetadataKey, WorkflowNodeExecutionStatus
 from graphon.model_runtime.entities.llm_entities import LLMResult, LLMUsage
-from graphon.nodes.human_input.entities import FormInput, UserAction
+try:
+    from graphon.nodes.human_input.entities import FormInput, UserAction
+except ImportError:
+    # graphon>=0.4 renamed these models.
+    from graphon.nodes.human_input.entities import (
+        FormInputConfig as FormInput,
+    )
+    from graphon.nodes.human_input.entities import (
+        UserActionConfig as UserAction,
+    )
 
 
 class AnnotationReplyAccount(BaseModel):

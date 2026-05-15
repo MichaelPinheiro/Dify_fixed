@@ -159,6 +159,19 @@ chmod +x dify-env-sync.sh
 
 ### Additional Information
 
+- **Troubleshooting: `structured_output`**
+
+  Structured output is now enforced natively in application code (no silent fallback to plain text).
+  If a model response does not match the configured JSON schema, the node fails explicitly with a parse/validation error.
+
+  Recommended checks:
+
+  - confirm your output schema is valid JSON Schema and matches the model prompt intent
+  - confirm the selected model supports the configured structured-output mode
+  - inspect node execution logs for explicit schema mismatch details
+
+  `fix_structured_output_graphon.sh` remains only as an emergency rollback tool for legacy environments and is **not** the default path for current deployments.
+
 - **Continuous Improvement Phase**: We are actively seeking feedback from the community to refine and enhance the deployment process. As more users adopt this new method, we will continue to make improvements based on your experiences and suggestions.
 - **Support**: For detailed configuration options and environment variable settings, refer to the `.env.example` file and the Docker Compose configuration files in the `docker` directory.
 

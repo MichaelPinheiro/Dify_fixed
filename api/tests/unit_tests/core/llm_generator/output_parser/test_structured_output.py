@@ -9,6 +9,7 @@ from core.llm_generator.output_parser.structured_output import (
     _handle_native_json_schema,
     _handle_prompt_based_schema,
     _parse_structured_output,
+    _validate_structured_output_schema,
     _prepare_schema_for_model,
     _set_response_format,
     convert_boolean_to_string,
@@ -95,12 +96,14 @@ class TestStructuredOutput:
     def test_parse_structured_output_repair_list(self):
         # Deepseek-r1 case: result is a list containing a dict
         text = '[{"key": "value"}]'
-        assert _parse_structured_output(text) == {"key": "value"}
+        with pytest.raises(OutputParserError):
+            _parse_structured_output(text)
 
     def test_parse_structured_output_repair_list_no_dict(self):
         # Deepseek-r1 case: result is a list with NO dict
         text = "[1, 2, 3]"
-        assert _parse_structured_output(text) == {}
+        with pytest.raises(OutputParserError):
+            _parse_structured_output(text)
 
     def test_parse_structured_output_repair_fail(self):
         text = "not a json at all"
@@ -137,6 +140,60 @@ class TestStructuredOutput:
         ]
         _set_response_format(params, rules)
         assert params["response_format"] == ResponseFormat.JSON_OBJECT
+
+    def test_validate_structured_output_schema_success(self):
+        _validate_structured_output_schema(
+            structured_output={"result": "ok"},
+            json_schema={
+                "type": "object",
+                "properties": {"result": {"type": "string"}},
+                "required": ["result"],
+                "additionalProperties": False,
+            },
+        )
+
+    def test_validate_structured_output_schema_mismatch(self):
+        with pytest.raises(OutputParserError, match="does not match schema"):
+            _validate_structured_output_schema(
+                structured_output={"result": 1},
+                json_schema={
+                    "type": "object",
+                    "properties": {"result": {"type": "string"}},
+                    "required": ["result"],
+                    "additionalProperties": False,
+                },
+            )
+
+    def test_validate_structured_output_schema_requires_declared_properties_by_default(self):
+        with pytest.raises(OutputParserError, match="'route' is a required property"):
+            _validate_structured_output_schema(
+                structured_output={},
+                json_schema={
+                    "type": "object",
+                    "properties": {"route": {"type": "string"}},
+                },
+            )
+
+    def test_validate_structured_output_schema_respects_explicit_required_list(self):
+        _validate_structured_output_schema(
+            structured_output={},
+            json_schema={
+                "type": "object",
+                "properties": {"route": {"type": "string"}},
+                "required": [],
+            },
+        )
+
+    def test_validate_structured_output_schema_invalid_schema(self):
+        with pytest.raises(OutputParserError, match="Invalid structured output schema"):
+            _validate_structured_output_schema(
+                structured_output={"result": "ok"},
+                json_schema={
+                    "type": "object",
+                    "properties": {"result": {"type": "string"}},
+                    "required": [1],
+                },
+            )
 
     def test_handle_native_json_schema(self):
         provider = "openai"
@@ -300,6 +357,37 @@ class TestStructuredOutput:
         assert isinstance(result, LLMResultWithStructuredOutput)
         assert result.structured_output == {"result": "success"}
         assert result.system_fingerprint == "fp_prompt"
+
+    def test_invoke_llm_with_structured_output_no_stream_schema_mismatch_raises(self):
+        model_schema = MagicMock(spec=AIModelEntity)
+        model_schema.support_structure_output = False
+        model_schema.parameter_rules = []
+        model_schema.model = "claude-3"
+
+        model_instance = MagicMock(spec=ModelInstance)
+        mock_result = MagicMock(spec=LLMResult)
+        mock_result.message = AssistantPromptMessage(content='{"result": 1}')
+        mock_result.model = "claude-3"
+        mock_result.usage = LLMUsage.empty_usage()
+        mock_result.system_fingerprint = "fp_prompt"
+        mock_result.prompt_messages = []
+
+        model_instance.invoke_llm.return_value = mock_result
+
+        with pytest.raises(OutputParserError, match="does not match schema"):
+            invoke_llm_with_structured_output(
+                provider="anthropic",
+                model_schema=model_schema,
+                model_instance=model_instance,
+                prompt_messages=[UserPromptMessage(content="hi")],
+                json_schema={
+                    "type": "object",
+                    "properties": {"result": {"type": "string"}},
+                    "required": ["result"],
+                    "additionalProperties": False,
+                },
+                stream=False,
+            )
 
     def test_invoke_llm_with_structured_output_no_string_error(self):
         model_schema = MagicMock(spec=AIModelEntity)

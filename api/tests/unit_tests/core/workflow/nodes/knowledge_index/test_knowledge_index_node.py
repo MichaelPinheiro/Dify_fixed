@@ -102,7 +102,7 @@ def _build_node(
 ) -> KnowledgeIndexNode:
     return KnowledgeIndexNode(
         node_id=node_id,
-        config=(
+        data=(
             node_data
             if isinstance(node_data, KnowledgeIndexNodeData)
             else KnowledgeIndexNodeData.model_validate(node_data)

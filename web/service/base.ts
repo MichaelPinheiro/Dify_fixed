@@ -300,6 +300,23 @@ export const handleStream = (
             else if (bufferObj.event === 'workflow_finished') {
               onWorkflowFinished?.(bufferObj as WorkflowFinishedResponse)
             }
+            else if (bufferObj.event === 'error') {
+              const errorMessage = typeof bufferObj.message === 'string' && bufferObj.message
+                ? bufferObj.message
+                : 'Server Error'
+              const errorCode = typeof bufferObj.code === 'string'
+                ? bufferObj.code
+                : undefined
+              onData('', false, {
+                conversationId: bufferObj.conversation_id,
+                messageId: bufferObj.message_id ?? '',
+                errorMessage,
+                errorCode,
+              })
+              hasError = true
+              onCompleted?.(true, errorMessage)
+              return
+            }
             else if (bufferObj.event === 'node_started') {
               onNodeStarted?.(bufferObj as NodeStartedResponse)
             }

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from core.app.apps.base_app_queue_manager import AppQueueManager
 from core.app.entities.app_invoke_entities import (
     AppGenerateEntity,
+    InvokeFrom,
 )
 from core.app.entities.queue_entities import (
     QueueErrorEvent,
@@ -50,6 +51,11 @@ class BasedGenerateTaskPipeline:
             err = InvokeAuthorizationError("Incorrect API key provided")
         elif isinstance(e, InvokeError | ValueError):
             err = e
+        elif isinstance(e, Exception) and self._should_expose_error_description():
+            description = getattr(e, "description", None) or str(e) or e.__class__.__name__
+            err = ValueError(description)
+        elif isinstance(e, Exception):
+            err = e
         else:
             description = getattr(e, "description", None)
             err = Exception(description if description is not None else str(e))
@@ -66,6 +72,13 @@ class BasedGenerateTaskPipeline:
         message.status = MessageStatus.ERROR
         message.error = err_desc
         return err
+
+    def _should_expose_error_description(self) -> bool:
+        invoke_from = getattr(self._application_generate_entity, "invoke_from", None)
+        return invoke_from in {
+            InvokeFrom.DEBUGGER,
+            InvokeFrom.VALIDATION,
+        }
 
     def _error_to_desc(self, e: Exception) -> str:
         """

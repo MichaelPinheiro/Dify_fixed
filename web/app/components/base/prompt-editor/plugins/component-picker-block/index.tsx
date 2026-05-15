@@ -104,6 +104,7 @@ const ComponentPicker = ({
   const [queryString, setQueryString] = useState<string | null>(null)
   const [blurHidden, setBlurHidden] = useState(false)
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const keepOpenOnNextBlurRef = useRef(false)
 
   const clearBlurTimer = useCallback(() => {
     if (blurTimerRef.current) {
@@ -112,14 +113,42 @@ const ComponentPicker = ({
     }
   }, [])
 
+  const shouldKeepOpenOnBlurTarget = useCallback((target: EventTarget | null) => {
+    if (!(target instanceof HTMLElement))
+      return false
+
+    return target.classList.contains('var-search-input')
+      || !!target.closest('[data-component-picker-keep-open="true"]')
+  }, [])
+
+  useEffect(() => {
+    const handlePointerDownCapture = (event: PointerEvent) => {
+      keepOpenOnNextBlurRef.current = shouldKeepOpenOnBlurTarget(event.target)
+    }
+
+    const handleMouseDownCapture = (event: MouseEvent) => {
+      keepOpenOnNextBlurRef.current = shouldKeepOpenOnBlurTarget(event.target)
+    }
+
+    document.addEventListener('pointerdown', handlePointerDownCapture, true)
+    document.addEventListener('mousedown', handleMouseDownCapture, true)
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDownCapture, true)
+      document.removeEventListener('mousedown', handleMouseDownCapture, true)
+    }
+  }, [shouldKeepOpenOnBlurTarget])
+
   useEffect(() => {
     const unregister = mergeRegister(
       editor.registerCommand(
         BLUR_COMMAND,
         (event) => {
           clearBlurTimer()
-          const target = event?.relatedTarget as HTMLElement
-          if (!target?.classList?.contains('var-search-input'))
+          const target = event?.relatedTarget ?? null
+          const shouldKeepOpen = shouldKeepOpenOnBlurTarget(target) || keepOpenOnNextBlurRef.current
+          keepOpenOnNextBlurRef.current = false
+          if (!shouldKeepOpen)
             blurTimerRef.current = setTimeout(() => setBlurHidden(true), 200)
           return false
         },
@@ -129,6 +158,7 @@ const ComponentPicker = ({
         FOCUS_COMMAND,
         () => {
           clearBlurTimer()
+          keepOpenOnNextBlurRef.current = false
           setBlurHidden(false)
           return false
         },
@@ -141,7 +171,7 @@ const ComponentPicker = ({
         clearTimeout(blurTimerRef.current)
       unregister()
     }
-  }, [editor, clearBlurTimer])
+  }, [editor, clearBlurTimer, shouldKeepOpenOnBlurTarget])
 
   eventEmitter?.useSubscription((v: any) => {
     if (v.type === INSERT_VARIABLE_VALUE_BLOCK_COMMAND)

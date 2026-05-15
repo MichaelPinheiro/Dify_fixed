@@ -474,7 +474,7 @@ def test_get_model_type_instance_and_schema_reuse_bound_runtime_factory() -> Non
     assert model_type_instance is mock_model_type_instance
     assert model_schema is mock_schema
     assert mock_factory_cls.call_count == 2
-    mock_factory_cls.assert_called_with(model_runtime=bound_runtime)
+    mock_factory_cls.assert_called_with(runtime=bound_runtime)
     mock_factory_builder.assert_not_called()
 
 

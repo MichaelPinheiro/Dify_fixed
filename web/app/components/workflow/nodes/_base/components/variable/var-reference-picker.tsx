@@ -54,6 +54,7 @@ import VarReferencePickerTrigger from './var-reference-picker.trigger'
 import VarReferencePopup from './var-reference-popup'
 
 const TRIGGER_DEFAULT_WIDTH = 227
+const DEFAULT_OVERLAY_Z_INDEX = 1002
 
 type Props = {
   className?: string
@@ -417,7 +418,7 @@ const VarReferencePicker: FC<Props> = ({
           popupClassName="border-none bg-transparent p-0 shadow-none backdrop-blur-none"
           positionerProps={{
             style: {
-              zIndex: zIndex || 100,
+              zIndex: zIndex ?? DEFAULT_OVERLAY_Z_INDEX,
             },
           }}
         >

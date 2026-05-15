@@ -5,6 +5,8 @@ from enum import StrEnum
 from typing import Any, Literal, cast, overload
 
 import json_repair
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 from pydantic import TypeAdapter, ValidationError
 
 from core.llm_generator.output_parser.errors import OutputParserError
@@ -148,7 +150,10 @@ def invoke_llm_with_structured_output(
             )
 
         return LLMResultWithStructuredOutput(
-            structured_output=_parse_structured_output(llm_result.message.content),
+            structured_output=_parse_and_validate_structured_output(
+                result_text=llm_result.message.content,
+                json_schema=json_schema,
+            ),
             model=llm_result.model,
             message=llm_result.message,
             usage=llm_result.usage,
@@ -181,7 +186,10 @@ def invoke_llm_with_structured_output(
                 )
 
             yield LLMResultChunkWithStructuredOutput(
-                structured_output=_parse_structured_output(result_text),
+                structured_output=_parse_and_validate_structured_output(
+                    result_text=result_text,
+                    json_schema=json_schema,
+                ),
                 model=model_schema.model,
                 prompt_messages=prompt_messages,
                 system_fingerprint=system_fingerprint,
@@ -194,6 +202,19 @@ def invoke_llm_with_structured_output(
             )
 
         return generator()
+
+
+def _parse_and_validate_structured_output(
+    *,
+    result_text: str,
+    json_schema: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    structured_output = _parse_structured_output(result_text)
+    _validate_structured_output_schema(
+        structured_output=structured_output,
+        json_schema=json_schema,
+    )
+    return structured_output
 
 
 def _handle_native_json_schema(
@@ -278,24 +299,83 @@ def _handle_prompt_based_schema(
 
 
 def _parse_structured_output(result_text: str) -> Mapping[str, Any]:
-    structured_output: Mapping[str, Any] = {}
-    parsed: Mapping[str, Any] = {}
     try:
-        parsed = TypeAdapter(Mapping).validate_json(result_text)
-        if not isinstance(parsed, dict):
-            raise OutputParserError(f"Failed to parse structured output: {result_text}")
-        structured_output = parsed
+        parsed = TypeAdapter(dict[str, Any]).validate_json(result_text)
     except ValidationError:
         # if the result_text is not a valid json, try to repair it
         temp_parsed = json_repair.loads(result_text)
         if not isinstance(temp_parsed, dict):
-            # handle reasoning model like deepseek-r1 got '<think>\n\n</think>\n' prefix
-            if isinstance(temp_parsed, list):
-                temp_parsed = next((item for item in temp_parsed if isinstance(item, dict)), {})
-            else:
-                raise OutputParserError(f"Failed to parse structured output: {result_text}")
-        structured_output = cast(dict, temp_parsed)
-    return structured_output
+            raise OutputParserError(f"Failed to parse structured output as JSON object: {result_text}")
+        parsed = cast(dict[str, Any], temp_parsed)
+
+    if not isinstance(parsed, dict):
+        raise OutputParserError(f"Failed to parse structured output as JSON object: {result_text}")
+
+    return parsed
+
+
+def _validate_structured_output_schema(
+    *,
+    structured_output: Mapping[str, Any],
+    json_schema: Mapping[str, Any],
+) -> None:
+    schema = _normalize_structured_output_schema(json_schema)
+    try:
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema=schema)
+    except SchemaError as exc:
+        raise OutputParserError(f"Invalid structured output schema: {exc.message}") from exc
+
+    validation_error = next(validator.iter_errors(structured_output), None)
+    if validation_error is None:
+        return
+
+    path = ".".join(str(part) for part in validation_error.path)
+    location = path if path else "<root>"
+    raise OutputParserError(
+        f"Structured output does not match schema at {location}: {validation_error.message}"
+    )
+
+
+def _normalize_structured_output_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize Dify visual-editor schemas into strict runtime schemas.
+
+    The visual editor exposes declared object properties as selectable workflow
+    variables. If those properties are optional at JSON-schema level, downstream
+    nodes can select e.g. `structured_output.route` and then fail later because
+    the model legally omitted `route`. Treat declared object properties as
+    required unless the schema author explicitly provided a `required` list.
+    """
+    normalized = dict(deepcopy(schema))
+    _require_declared_object_properties(normalized)
+    return normalized
+
+
+def _require_declared_object_properties(schema: dict[str, Any]) -> None:
+    if not isinstance(schema, dict):
+        return
+
+    properties = schema.get("properties")
+    if schema.get("type") == "object" and isinstance(properties, dict):
+        if "required" not in schema:
+            schema["required"] = list(properties.keys())
+
+        for property_schema in properties.values():
+            if isinstance(property_schema, dict):
+                _require_declared_object_properties(property_schema)
+            elif isinstance(property_schema, list):
+                for item in property_schema:
+                    if isinstance(item, dict):
+                        _require_declared_object_properties(item)
+
+    for key in ("items", "anyOf", "oneOf", "allOf"):
+        value = schema.get(key)
+        if isinstance(value, dict):
+            _require_declared_object_properties(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    _require_declared_object_properties(item)
 
 
 def _prepare_schema_for_model(provider: str, model_schema: AIModelEntity, schema: Mapping):
@@ -310,7 +390,7 @@ def _prepare_schema_for_model(provider: str, model_schema: AIModelEntity, schema
     """
 
     # Deep copy to avoid modifying the original schema
-    processed_schema = dict(deepcopy(schema))
+    processed_schema = _normalize_structured_output_schema(schema)
 
     # Convert boolean types to string types (common requirement)
     convert_boolean_to_string(processed_schema)
