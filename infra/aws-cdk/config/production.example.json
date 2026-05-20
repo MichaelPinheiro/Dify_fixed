@@ -15,8 +15,14 @@
     "hostedZoneName": "example.com",
     "subdomain": "dify"
   },
-  "capacityProvider": "FARGATE",
   "enableExecuteCommand": true,
+  "ecsEc2": {
+    "instanceType": "m6i.large",
+    "desiredInstances": 2,
+    "minInstances": 2,
+    "maxInstances": 4,
+    "useSpotInstances": false
+  },
   "images": {
     "api": "123456789012.dkr.ecr.us-east-1.amazonaws.com/dify-images:dify-api_fork-2026-05-20",
     "web": "123456789012.dkr.ecr.us-east-1.amazonaws.com/dify-images:dify-web_fork-2026-05-20",
@@ -44,21 +50,21 @@
   },
   "services": {
     "web": {
-      "cpu": 512,
+      "cpu": 256,
       "memoryMiB": 1024,
       "desiredCount": 1,
       "minCount": 1,
       "maxCount": 2
     },
     "api": {
-      "cpu": 1024,
+      "cpu": 512,
       "memoryMiB": 2048,
       "desiredCount": 1,
       "minCount": 1,
       "maxCount": 2
     },
     "worker": {
-      "cpu": 1024,
+      "cpu": 512,
       "memoryMiB": 2048,
       "desiredCount": 1,
       "minCount": 1,
@@ -72,14 +78,14 @@
       "maxCount": 1
     },
     "sandbox": {
-      "cpu": 512,
+      "cpu": 256,
       "memoryMiB": 1024,
       "desiredCount": 1,
       "minCount": 1,
       "maxCount": 1
     },
     "pluginDaemon": {
-      "cpu": 512,
+      "cpu": 256,
       "memoryMiB": 1024,
       "desiredCount": 1,
       "minCount": 1,

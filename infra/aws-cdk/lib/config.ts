@@ -1,14 +1,21 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-export type CapacityProvider = 'FARGATE' | 'FARGATE_SPOT';
-
 export interface ServiceSizing {
   cpu: number;
   memoryMiB: number;
   desiredCount: number;
   minCount: number;
   maxCount: number;
+}
+
+export interface EcsEc2Config {
+  instanceType: string;
+  desiredInstances: number;
+  minInstances: number;
+  maxInstances: number;
+  useSpotInstances: boolean;
+  spotMaxPrice?: string;
 }
 
 export interface DeploymentConfig {
@@ -28,8 +35,8 @@ export interface DeploymentConfig {
     subdomain: string;
     certificateArn?: string;
   };
-  capacityProvider: CapacityProvider;
   enableExecuteCommand: boolean;
+  ecsEc2: EcsEc2Config;
   images: {
     api: string;
     web: string;

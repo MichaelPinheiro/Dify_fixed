@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { RemovalPolicy } from 'aws-cdk-lib';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as elasticache from 'aws-cdk-lib/aws-elasticache';
@@ -55,7 +56,13 @@ export class DifyEcsProductionStack extends cdk.Stack {
 
     const serviceSecurityGroup = new ec2.SecurityGroup(this, 'ServiceSecurityGroup', {
       vpc,
-      description: 'ECS services security group',
+      description: 'ECS tasks security group',
+      allowAllOutbound: true,
+    });
+
+    const instanceSecurityGroup = new ec2.SecurityGroup(this, 'InstanceSecurityGroup', {
+      vpc,
+      description: 'ECS container instances security group',
       allowAllOutbound: true,
     });
 
@@ -71,7 +78,7 @@ export class DifyEcsProductionStack extends cdk.Stack {
       allowAllOutbound: true,
     });
 
-    serviceSecurityGroup.addIngressRule(serviceSecurityGroup, ec2.Port.allTcp(), 'Allow service-to-service communication');
+    serviceSecurityGroup.addIngressRule(serviceSecurityGroup, ec2.Port.allTcp(), 'Allow task-to-task communication');
     dbSecurityGroup.addIngressRule(serviceSecurityGroup, ec2.Port.tcp(5432), 'Allow ECS tasks to Aurora');
     redisSecurityGroup.addIngressRule(serviceSecurityGroup, ec2.Port.tcp(6379), 'Allow ECS tasks to Redis');
 
@@ -83,6 +90,22 @@ export class DifyEcsProductionStack extends cdk.Stack {
       versioned: true,
       removalPolicy: cfg.storage.forceDestroy ? RemovalPolicy.DESTROY : RemovalPolicy.RETAIN,
       autoDeleteObjects: cfg.storage.forceDestroy,
+    });
+
+    const createPluginsPlaceholder = new AwsCustomResource(this, 'CreatePluginsPlaceholder', {
+      onUpdate: {
+        service: 's3',
+        action: 'putObject',
+        parameters: {
+          Bucket: storageBucket.bucketName,
+          Key: 'plugins',
+          Body: 'placeholder. see https://github.com/langgenius/dify-plugin-daemon/issues/35',
+        },
+        physicalResourceId: PhysicalResourceId.of(`plugins-placeholder-${cfg.appName}`),
+      },
+      policy: AwsCustomResourcePolicy.fromSdkCalls({
+        resources: [storageBucket.bucketArn, storageBucket.arnForObjects('*')],
+      }),
     });
 
     const postgres = new rds.DatabaseCluster(this, 'PostgresCluster', {
@@ -137,6 +160,13 @@ export class DifyEcsProductionStack extends cdk.Stack {
       `CREATE DATABASE ${cfg.database.pgvectorDatabaseName};`,
       cfg.database.defaultDatabaseName,
     );
+
+    const createPluginDb = runSql(
+      'CreatePluginDatabase',
+      `CREATE DATABASE ${cfg.database.pluginDatabaseName};`,
+      cfg.database.defaultDatabaseName,
+    );
+
     const createPgVectorExtension = runSql(
       'CreatePgVectorExtension',
       'CREATE EXTENSION IF NOT EXISTS vector;',
@@ -185,6 +215,40 @@ export class DifyEcsProductionStack extends cdk.Stack {
       containerInsights: true,
     });
 
+    const containerInstanceRole = new iam.Role(this, 'ContainerInstanceRole', {
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonEC2ContainerServiceforEC2Role'),
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+      ],
+    });
+
+    const asg = new autoscaling.AutoScalingGroup(this, 'EcsAsg', {
+      vpc,
+      instanceType: new ec2.InstanceType(cfg.ecsEc2.instanceType),
+      machineImage: ecs.EcsOptimizedImage.amazonLinux2(),
+      role: containerInstanceRole,
+      minCapacity: cfg.ecsEc2.minInstances,
+      desiredCapacity: cfg.ecsEc2.desiredInstances,
+      maxCapacity: cfg.ecsEc2.maxInstances,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      spotPrice: cfg.ecsEc2.useSpotInstances ? cfg.ecsEc2.spotMaxPrice : undefined,
+      updatePolicy: autoscaling.UpdatePolicy.rollingUpdate(),
+    });
+    asg.addSecurityGroup(instanceSecurityGroup);
+    asg.addUserData(
+      `echo ECS_CLUSTER=${cluster.clusterName} >> /etc/ecs/ecs.config`,
+      'echo ECS_ENABLE_CONTAINER_METADATA=true >> /etc/ecs/ecs.config',
+    );
+
+    const asgCapacityProvider = new ecs.AsgCapacityProvider(this, 'AsgCapacityProvider', {
+      autoScalingGroup: asg,
+      enableManagedScaling: true,
+      enableManagedTerminationProtection: false,
+      spotInstanceDraining: cfg.ecsEc2.useSpotInstances,
+    });
+    cluster.addAsgCapacityProvider(asgCapacityProvider);
+
     const namespace = new servicediscovery.PrivateDnsNamespace(this, 'Namespace', {
       vpc,
       name: `${cfg.appName}.internal`,
@@ -217,30 +281,6 @@ export class DifyEcsProductionStack extends cdk.Stack {
         passwordLength: 42,
       },
     });
-
-    const defaultCapacityStrategies: ecs.CapacityProviderStrategy[] = [
-      {
-        capacityProvider: cfg.capacityProvider,
-        weight: 1,
-      },
-    ];
-
-    const createTaskDefinition = (id: string, sizing: ServiceSizing): ecs.FargateTaskDefinition => {
-      return new ecs.FargateTaskDefinition(this, `${id}TaskDefinition`, {
-        cpu: sizing.cpu,
-        memoryLimitMiB: sizing.memoryMiB,
-        runtimePlatform: {
-          cpuArchitecture: ecs.CpuArchitecture.X86_64,
-          operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
-        },
-      });
-    };
-
-    const makeAwsLogs = (prefix: string): ecs.LogDriver =>
-      ecs.LogDriver.awsLogs({
-        streamPrefix: prefix,
-        logRetention: logs.RetentionDays.ONE_MONTH,
-      });
 
     const appHost = cfg.domain ? `${cfg.domain.subdomain}.${cfg.domain.hostedZoneName}` : undefined;
 
@@ -346,6 +386,7 @@ export class DifyEcsProductionStack extends cdk.Stack {
       CELERY_BACKEND: 'redis',
       WEB_API_CORS_ALLOW_ORIGINS: cfg.app.corsAllowOrigins,
       CONSOLE_CORS_ALLOW_ORIGINS: cfg.app.corsAllowOrigins,
+      SQLALCHEMY_POOL_PRE_PING: 'True',
       GUNICORN_TIMEOUT: cfg.app.gunicornTimeoutSeconds.toString(),
       CELERY_WORKER_AMOUNT: cfg.app.celeryWorkerAmount.toString(),
       CELERY_AUTO_SCALE: cfg.app.celeryAutoScale ? 'true' : 'false',
@@ -387,9 +428,79 @@ export class DifyEcsProductionStack extends cdk.Stack {
       PLUGIN_DAEMON_KEY: ecs.Secret.fromSecretsManager(pluginServerKey),
     };
 
-    const apiTask = createTaskDefinition('Api', cfg.services.api);
+    const makeAwsLogs = (prefix: string): ecs.LogDriver =>
+      ecs.LogDriver.awsLogs({
+        streamPrefix: prefix,
+        logRetention: logs.RetentionDays.ONE_MONTH,
+      });
+
+    const createTaskDefinition = (id: string): ecs.Ec2TaskDefinition => {
+      const executionRole = new iam.Role(this, `${id}TaskExecutionRole`, {
+        assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+        managedPolicies: [
+          iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'),
+        ],
+      });
+
+      const taskRole = new iam.Role(this, `${id}TaskRole`, {
+        assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+      });
+
+      return new ecs.Ec2TaskDefinition(this, `${id}TaskDefinition`, {
+        executionRole,
+        taskRole,
+        networkMode: ecs.NetworkMode.AWS_VPC,
+      });
+    };
+
+    const createService = (
+      id: string,
+      taskDefinition: ecs.Ec2TaskDefinition,
+      sizing: ServiceSizing,
+      cloudMapName: string,
+    ): ecs.Ec2Service => {
+      return new ecs.Ec2Service(this, `${id}Service`, {
+        cluster,
+        taskDefinition,
+        desiredCount: sizing.desiredCount,
+        securityGroups: [serviceSecurityGroup],
+        vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        enableExecuteCommand: cfg.enableExecuteCommand,
+        capacityProviderStrategies: [
+          {
+            capacityProvider: asgCapacityProvider.capacityProviderName,
+            weight: 1,
+          },
+        ],
+        cloudMapOptions: {
+          cloudMapNamespace: namespace,
+          name: cloudMapName,
+        },
+      });
+    };
+
+    const applyAutoscaling = (service: ecs.Ec2Service, idPrefix: string, sizing: ServiceSizing): void => {
+      const scalable = service.autoScaleTaskCount({
+        minCapacity: sizing.minCount,
+        maxCapacity: sizing.maxCount,
+      });
+      scalable.scaleOnCpuUtilization(`${idPrefix}CpuScaling`, {
+        targetUtilizationPercent: 65,
+        scaleInCooldown: cdk.Duration.seconds(120),
+        scaleOutCooldown: cdk.Duration.seconds(60),
+      });
+      scalable.scaleOnMemoryUtilization(`${idPrefix}MemoryScaling`, {
+        targetUtilizationPercent: 70,
+        scaleInCooldown: cdk.Duration.seconds(120),
+        scaleOutCooldown: cdk.Duration.seconds(60),
+      });
+    };
+
+    const apiTask = createTaskDefinition('Api');
     const apiContainer = apiTask.addContainer('ApiContainer', {
       image: ecs.ContainerImage.fromRegistry(cfg.images.api),
+      cpu: cfg.services.api.cpu,
+      memoryLimitMiB: cfg.services.api.memoryMiB,
       environment: {
         ...commonApiWorkerEnv,
         MODE: 'api',
@@ -407,25 +518,15 @@ export class DifyEcsProductionStack extends cdk.Stack {
     });
     apiContainer.addPortMappings({ containerPort: 5001 });
 
-    const apiService = new ecs.FargateService(this, 'ApiService', {
-      cluster,
-      taskDefinition: apiTask,
-      desiredCount: cfg.services.api.desiredCount,
-      securityGroups: [serviceSecurityGroup],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      enableExecuteCommand: cfg.enableExecuteCommand,
-      capacityProviderStrategies: defaultCapacityStrategies,
-      cloudMapOptions: {
-        cloudMapNamespace: namespace,
-        name: 'api',
-      },
-    });
+    const apiService = createService('Api', apiTask, cfg.services.api, 'api');
     storageBucket.grantReadWrite(apiTask.taskRole);
     postgres.connections.allowDefaultPortFrom(apiService);
 
-    const workerTask = createTaskDefinition('Worker', cfg.services.worker);
+    const workerTask = createTaskDefinition('Worker');
     workerTask.addContainer('WorkerContainer', {
       image: ecs.ContainerImage.fromRegistry(cfg.images.api),
+      cpu: cfg.services.worker.cpu,
+      memoryLimitMiB: cfg.services.worker.memoryMiB,
       environment: {
         ...commonApiWorkerEnv,
         MODE: 'worker',
@@ -435,25 +536,15 @@ export class DifyEcsProductionStack extends cdk.Stack {
       logging: makeAwsLogs('worker'),
     });
 
-    const workerService = new ecs.FargateService(this, 'WorkerService', {
-      cluster,
-      taskDefinition: workerTask,
-      desiredCount: cfg.services.worker.desiredCount,
-      securityGroups: [serviceSecurityGroup],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      enableExecuteCommand: cfg.enableExecuteCommand,
-      capacityProviderStrategies: defaultCapacityStrategies,
-      cloudMapOptions: {
-        cloudMapNamespace: namespace,
-        name: 'worker',
-      },
-    });
+    const workerService = createService('Worker', workerTask, cfg.services.worker, 'worker');
     storageBucket.grantReadWrite(workerTask.taskRole);
     postgres.connections.allowDefaultPortFrom(workerService);
 
-    const workerBeatTask = createTaskDefinition('WorkerBeat', cfg.services.workerBeat);
+    const workerBeatTask = createTaskDefinition('WorkerBeat');
     workerBeatTask.addContainer('WorkerBeatContainer', {
       image: ecs.ContainerImage.fromRegistry(cfg.images.api),
+      cpu: cfg.services.workerBeat.cpu,
+      memoryLimitMiB: cfg.services.workerBeat.memoryMiB,
       environment: {
         ...commonApiWorkerEnv,
         MODE: 'beat',
@@ -463,25 +554,15 @@ export class DifyEcsProductionStack extends cdk.Stack {
       logging: makeAwsLogs('worker-beat'),
     });
 
-    const workerBeatService = new ecs.FargateService(this, 'WorkerBeatService', {
-      cluster,
-      taskDefinition: workerBeatTask,
-      desiredCount: cfg.services.workerBeat.desiredCount,
-      securityGroups: [serviceSecurityGroup],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      enableExecuteCommand: cfg.enableExecuteCommand,
-      capacityProviderStrategies: defaultCapacityStrategies,
-      cloudMapOptions: {
-        cloudMapNamespace: namespace,
-        name: 'worker-beat',
-      },
-    });
+    const workerBeatService = createService('WorkerBeat', workerBeatTask, cfg.services.workerBeat, 'worker-beat');
     storageBucket.grantReadWrite(workerBeatTask.taskRole);
     postgres.connections.allowDefaultPortFrom(workerBeatService);
 
-    const sandboxTask = createTaskDefinition('Sandbox', cfg.services.sandbox);
+    const sandboxTask = createTaskDefinition('Sandbox');
     const sandboxContainer = sandboxTask.addContainer('SandboxContainer', {
       image: ecs.ContainerImage.fromRegistry(cfg.images.sandbox),
+      cpu: cfg.services.sandbox.cpu,
+      memoryLimitMiB: cfg.services.sandbox.memoryMiB,
       environment: {
         GIN_MODE: 'release',
         WORKER_TIMEOUT: '15',
@@ -504,23 +585,13 @@ export class DifyEcsProductionStack extends cdk.Stack {
     });
     sandboxContainer.addPortMappings({ containerPort: 8194 });
 
-    const sandboxService = new ecs.FargateService(this, 'SandboxService', {
-      cluster,
-      taskDefinition: sandboxTask,
-      desiredCount: cfg.services.sandbox.desiredCount,
-      securityGroups: [serviceSecurityGroup],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      enableExecuteCommand: cfg.enableExecuteCommand,
-      capacityProviderStrategies: defaultCapacityStrategies,
-      cloudMapOptions: {
-        cloudMapNamespace: namespace,
-        name: 'sandbox',
-      },
-    });
+    const sandboxService = createService('Sandbox', sandboxTask, cfg.services.sandbox, 'sandbox');
 
-    const pluginTask = createTaskDefinition('PluginDaemon', cfg.services.pluginDaemon);
+    const pluginTask = createTaskDefinition('PluginDaemon');
     const pluginContainer = pluginTask.addContainer('PluginDaemonContainer', {
       image: ecs.ContainerImage.fromRegistry(cfg.images.pluginDaemon),
+      cpu: cfg.services.pluginDaemon.cpu,
+      memoryLimitMiB: cfg.services.pluginDaemon.memoryMiB,
       environment: {
         LOG_OUTPUT_FORMAT: 'text',
         DB_DATABASE: cfg.database.pluginDatabaseName,
@@ -536,6 +607,10 @@ export class DifyEcsProductionStack extends cdk.Stack {
         PLUGIN_WORKING_PATH: '/app/storage/cwd',
         PLUGIN_MAX_EXECUTION_TIMEOUT: cfg.app.pluginMaxExecutionTimeoutSeconds.toString(),
         MAX_PLUGIN_PACKAGE_SIZE: '52428800',
+        MAX_BUNDLE_PACKAGE_SIZE: '52428800',
+        PLUGIN_REMOTE_INSTALLING_ENABLED: 'true',
+        PLUGIN_REMOTE_INSTALLING_HOST: 'localhost',
+        PLUGIN_REMOTE_INSTALLING_PORT: '5003',
         S3_USE_AWS_MANAGED_IAM: cfg.storage.useManagedIamForS3 ? 'true' : 'false',
         S3_ENDPOINT: `https://s3.${this.region}.amazonaws.com`,
         AWS_REGION: this.region,
@@ -555,23 +630,11 @@ export class DifyEcsProductionStack extends cdk.Stack {
     });
     pluginContainer.addPortMappings({ containerPort: 5002 });
 
-    const pluginService = new ecs.FargateService(this, 'PluginDaemonService', {
-      cluster,
-      taskDefinition: pluginTask,
-      desiredCount: cfg.services.pluginDaemon.desiredCount,
-      securityGroups: [serviceSecurityGroup],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      enableExecuteCommand: cfg.enableExecuteCommand,
-      capacityProviderStrategies: defaultCapacityStrategies,
-      cloudMapOptions: {
-        cloudMapNamespace: namespace,
-        name: 'plugin-daemon',
-      },
-    });
+    const pluginService = createService('PluginDaemon', pluginTask, cfg.services.pluginDaemon, 'plugin-daemon');
     storageBucket.grantReadWrite(pluginTask.taskRole);
     postgres.connections.allowDefaultPortFrom(pluginService);
 
-    const ssrfTask = createTaskDefinition('SsrfProxy', cfg.services.ssrfProxy);
+    const ssrfTask = createTaskDefinition('SsrfProxy');
     const ssrfProxyImage =
       cfg.images.ssrfProxy === 'asset'
         ? ecs.ContainerImage.fromAsset(join(__dirname, '..', 'assets', 'ssrf-proxy'), {
@@ -581,6 +644,8 @@ export class DifyEcsProductionStack extends cdk.Stack {
 
     const ssrfContainer = ssrfTask.addContainer('SsrfProxyContainer', {
       image: ssrfProxyImage,
+      cpu: cfg.services.ssrfProxy.cpu,
+      memoryLimitMiB: cfg.services.ssrfProxy.memoryMiB,
       environment: {
         HTTP_PORT: '3128',
         COREDUMP_DIR: '/var/spool/squid',
@@ -592,24 +657,14 @@ export class DifyEcsProductionStack extends cdk.Stack {
     });
     ssrfContainer.addPortMappings({ containerPort: 3128 });
 
-    const ssrfService = new ecs.FargateService(this, 'SsrfProxyService', {
-      cluster,
-      taskDefinition: ssrfTask,
-      desiredCount: cfg.services.ssrfProxy.desiredCount,
-      securityGroups: [serviceSecurityGroup],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      enableExecuteCommand: cfg.enableExecuteCommand,
-      capacityProviderStrategies: defaultCapacityStrategies,
-      cloudMapOptions: {
-        cloudMapNamespace: namespace,
-        name: 'ssrf-proxy',
-      },
-    });
+    const ssrfService = createService('SsrfProxy', ssrfTask, cfg.services.ssrfProxy, 'ssrf-proxy');
     ssrfService.node.addDependency(sandboxService);
 
-    const webTask = createTaskDefinition('Web', cfg.services.web);
+    const webTask = createTaskDefinition('Web');
     const webContainer = webTask.addContainer('WebContainer', {
       image: ecs.ContainerImage.fromRegistry(cfg.images.web),
+      cpu: cfg.services.web.cpu,
+      memoryLimitMiB: cfg.services.web.memoryMiB,
       environment: {
         LOG_LEVEL: cfg.app.logLevel,
         DEBUG: 'false',
@@ -631,20 +686,7 @@ export class DifyEcsProductionStack extends cdk.Stack {
     });
     webContainer.addPortMappings({ containerPort: 3000 });
 
-    const webService = new ecs.FargateService(this, 'WebService', {
-      cluster,
-      taskDefinition: webTask,
-      desiredCount: cfg.services.web.desiredCount,
-      securityGroups: [serviceSecurityGroup],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      enableExecuteCommand: cfg.enableExecuteCommand,
-      capacityProviderStrategies: defaultCapacityStrategies,
-      cloudMapOptions: {
-        cloudMapNamespace: namespace,
-        name: 'web',
-      },
-    });
-
+    const webService = createService('Web', webTask, cfg.services.web, 'web');
     storageBucket.grantReadWrite(webTask.taskRole);
 
     const webTarget = new elbv2.ApplicationTargetGroup(this, 'WebTargetGroup', {
@@ -685,11 +727,16 @@ export class DifyEcsProductionStack extends cdk.Stack {
       targetGroups: [apiTarget],
       conditions: [
         elbv2.ListenerCondition.pathPatterns([
-          '/api*',
-          '/v1*',
-          '/console/api*',
-          '/files*',
-          '/triggers*',
+          '/api',
+          '/api/*',
+          '/v1',
+          '/v1/*',
+          '/console/api',
+          '/console/api/*',
+          '/files',
+          '/files/*',
+          '/triggers',
+          '/triggers/*',
         ]),
       ],
     });
@@ -706,31 +753,15 @@ export class DifyEcsProductionStack extends cdk.Stack {
       conditions: [elbv2.ListenerCondition.pathPatterns(['/*'])],
     });
 
-    const applyAutoscaling = (service: ecs.FargateService, idPrefix: string, sizing: ServiceSizing): void => {
-      const scalable = service.autoScaleTaskCount({
-        minCapacity: sizing.minCount,
-        maxCapacity: sizing.maxCount,
-      });
-      scalable.scaleOnCpuUtilization(`${idPrefix}CpuScaling`, {
-        targetUtilizationPercent: 65,
-        scaleInCooldown: cdk.Duration.seconds(120),
-        scaleOutCooldown: cdk.Duration.seconds(60),
-      });
-      scalable.scaleOnMemoryUtilization(`${idPrefix}MemoryScaling`, {
-        targetUtilizationPercent: 70,
-        scaleInCooldown: cdk.Duration.seconds(120),
-        scaleOutCooldown: cdk.Duration.seconds(60),
-      });
-    };
-
     applyAutoscaling(apiService, 'Api', cfg.services.api);
     applyAutoscaling(workerService, 'Worker', cfg.services.worker);
     applyAutoscaling(webService, 'Web', cfg.services.web);
 
-    storageBucket.grantReadWrite(apiTask.taskRole);
-    storageBucket.grantReadWrite(workerTask.taskRole);
-    storageBucket.grantReadWrite(workerBeatTask.taskRole);
-    storageBucket.grantReadWrite(pluginTask.taskRole);
+    apiService.node.addDependency(createPgVectorExtension);
+    workerService.node.addDependency(createPgVectorExtension);
+    workerBeatService.node.addDependency(createPgVectorExtension);
+    pluginService.node.addDependency(createPluginDb);
+    pluginService.node.addDependency(createPluginsPlaceholder);
 
     apiTask.taskRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
@@ -769,6 +800,10 @@ export class DifyEcsProductionStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'Namespace', {
       value: namespace.namespaceName,
+    });
+
+    new cdk.CfnOutput(this, 'EcsAutoScalingGroupName', {
+      value: asg.autoScalingGroupName,
     });
   }
 }

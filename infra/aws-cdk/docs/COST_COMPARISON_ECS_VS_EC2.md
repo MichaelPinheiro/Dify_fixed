@@ -1,9 +1,9 @@
-# Comparativo de Custos: ECS vs EC2 (5-8 usuários simultâneos)
+# Comparativo de Custos: ECS on EC2 vs EC2 all-in-one
 
 Data de referência: **20/05/2026**
 Região de referência: **us-east-1**
 
-> Valores abaixo são estimativas para tomada de decisão inicial. Sempre validar no AWS Pricing Calculator antes de aprovar custo final.
+> Este comparativo já desconsidera Fargate, conforme decisão do time.
 
 ## Cenário de carga considerado
 
@@ -11,71 +11,81 @@ Região de referência: **us-east-1**
 - Uso misto: chat, workflows, uploads moderados
 - Serviços do fork: `web`, `api`, `worker`, `worker_beat`, `sandbox`, `plugin_daemon`, `ssrf_proxy`
 
-## Opção A: ECS/Fargate + serviços gerenciados (recomendado)
+## Opção A: ECS on EC2 (arquitetura recomendada nesta branch)
 
 Componentes:
 
-- Fargate para serviços da aplicação
+- ECS Cluster com Capacity Provider em Auto Scaling Group (EC2)
 - Aurora Serverless v2
 - ElastiCache Valkey
 - ALB
 - S3
 - Secrets Manager
-- NAT (se necessário)
 
-Faixa mensal típica:
+Faixa mensal típica (infra):
 
-- **US$ 120 ~ US$ 260 / mês** (infra)
+- **US$ 95 ~ US$ 220 / mês**
 
-## Opção B: EC2 all-in-one (tudo na VM)
+Observação de dimensionamento:
+
+- com `awsvpcTrunking` habilitado, o custo fica nessa faixa (menos instâncias para a mesma quantidade de tasks)
+- sem `awsvpcTrunking`, pode precisar de mais instâncias EC2 e aumentar o custo mensal
+
+Vantagens:
+
+- custo menor que Fargate para carga contínua
+- separação de serviços e scaling por task
+- rollback/deploy mais limpo que docker-compose direto em VM
+
+Trade-offs:
+
+- precisa gerenciar capacidade EC2 do cluster
+- patching/observabilidade da camada EC2
+
+## Opção B: EC2 all-in-one (docker-compose na VM)
 
 Componentes:
 
-- 1x EC2 (`t3.xlarge` recomendado para produção mínima)
+- 1x EC2 (`t3.xlarge` recomendado para 5-8 simultâneos)
 - EBS
 - ALB opcional
 
-Faixa mensal típica:
+Faixa mensal típica (infra):
 
-- **US$ 70 ~ US$ 160 / mês** (infra)
+- **US$ 70 ~ US$ 160 / mês**
 
-Risco operacional:
+Vantagens:
+
+- menor custo bruto inicial
+- simples para PoC
+
+Trade-offs:
 
 - ponto único de falha
 - scaling manual
-- manutenção de SO, Docker, backup e restore por conta do time
-
-## Opção C: EC2 para app + RDS/Redis gerenciados
-
-Componentes:
-
-- 1x EC2 (`t3.large`/`t3.xlarge`) para app containers
-- Aurora + ElastiCache + S3 + ALB
-
-Faixa mensal típica:
-
-- **US$ 140 ~ US$ 300 / mês** (infra)
+- backup/restore/patching por conta do time
+- maior risco operacional em produção
 
 ## Leitura prática
 
-- **Menor custo bruto**: EC2 all-in-one
-- **Melhor equilíbrio produção**: ECS/Fargate + managed data services
-- **Melhor resiliência e escalabilidade**: ECS/Fargate
+- **Menor custo puro**: EC2 all-in-one
+- **Melhor equilíbrio custo x operação**: ECS on EC2
+- **Melhor caminho para evoluir sem reescrever tudo**: ECS on EC2 com ASG + serviços gerenciados
 
 ## Custos fora da infra
 
-- Custo de LLM (OpenAI, Bedrock, etc.)
-- Transferência de dados para Internet
-- Armazenamento de arquivos e logs
+- consumo de LLM (OpenAI, Bedrock, etc.)
+- transferência de dados
+- armazenamento de logs e objetos
 
-Em muitos casos, o custo de modelo supera o custo de infraestrutura.
+Em cenários com uso intenso de IA, o custo do modelo pode ultrapassar o custo da infra.
 
-## Recomendação para este fork
+## Observação sobre Terraform
 
-Para seu cenário (5-8 simultâneos + necessidade de estabilidade):
+Se o time usa Terraform no dia a dia, mantenha a **mesma arquitetura lógica** desta branch:
 
-1. Começar em **ECS/Fargate** com sizing enxuto.
-2. Monitorar 2-4 semanas (CPU/Memória, latência, fila do Celery).
-3. Ajustar `api` e `worker` com autoscaling até `max=2`.
+- VPC + ALB + ECS Cluster (EC2 capacity provider)
+- Services: `web/api/worker/worker_beat/sandbox/plugin_daemon/ssrf_proxy`
+- Aurora + ElastiCache + S3 + Secrets Manager
 
-Se a prioridade número 1 for apenas custo de curto prazo e vocês aceitarem risco operacional, EC2 é viável para PoC, mas não é a melhor base para produção contínua.
+A troca de ferramenta (CDK -> Terraform) não muda a recomendação de arquitetura para esse cenário.

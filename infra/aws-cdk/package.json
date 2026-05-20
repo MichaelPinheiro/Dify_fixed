@@ -2,7 +2,7 @@
   "name": "dify-fork-aws-cdk",
   "version": "0.1.0",
   "private": true,
-  "description": "Production-grade AWS CDK deployment for Dify fork on ECS/Fargate",
+  "description": "Production-grade AWS CDK deployment for Dify fork on ECS (EC2 launch type)",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "watch": "tsc -w -p tsconfig.json",

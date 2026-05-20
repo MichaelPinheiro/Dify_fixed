@@ -15,5 +15,5 @@ new DifyEcsProductionStack(app, `${config.appName}-stack`, {
     region: config.environment.region,
   },
   config,
-  description: 'Dify fork production deployment on AWS ECS/Fargate',
+  description: 'Dify fork production deployment on AWS ECS (EC2 launch type)',
 });

@@ -1,13 +1,13 @@
-# Manual: Deploy do Fork no ECS com CDK
+# Manual: Deploy do Fork no ECS (EC2) com CDK
 
-Este manual foi feito para este fork do Dify e já considera produção com serviços separados (`web`, `api`, `worker`, `worker_beat`, `sandbox`, `plugin_daemon`, `ssrf_proxy`).
+Este manual foi feito para este fork do Dify e já considera produção com serviços separados (`web`, `api`, `worker`, `worker_beat`, `sandbox`, `plugin_daemon`, `ssrf_proxy`) em **ECS launch type EC2** (sem Fargate).
 
 ## 1) Pré-requisitos
 
 - AWS CLI configurado com permissões para CDK/ECS/RDS/ElastiCache/Route53/ACM/S3/Secrets
 - Node.js 20+
 - Docker + buildx
-- Conta AWS com cota para Fargate, ALB, RDS e ElastiCache
+- Conta AWS com cota para ECS/EC2, ALB, RDS e ElastiCache
 
 ## 2) Preparar configuração
 
@@ -46,6 +46,24 @@ npx cdk bootstrap
 npx cdk deploy
 ```
 
+## 4.1) Importante: limite de tasks por ENI (ECS on EC2 + `awsvpc`)
+
+Como esta stack usa `networkMode=awsvpc`, cada task consome ENI. Sem trunking, instâncias pequenas podem não comportar todos os serviços.
+
+Exemplo (AWS docs):
+
+- `m6i.large`: limite de **2 tasks** sem trunking, **10 tasks** com trunking habilitado
+
+Para evitar tasks em `PENDING`, habilite antes:
+
+Na raiz do projeto:
+
+```bash
+REGION=us-east-1 ./infra/aws-cdk/scripts/enable-awsvpc-trunking.sh
+```
+
+Depois disso, faça recycle das instâncias do cluster (novas instâncias passam a usar o limite aumentado).
+
 ## 5) O que a stack sobe
 
 - VPC com subnets públicas e privadas
@@ -53,7 +71,7 @@ npx cdk deploy
   - `/api`, `/v1`, `/console/api`, `/files`, `/triggers` -> `api`
   - `/e` -> `plugin_daemon`
   - `/*` -> `web`
-- ECS Fargate services:
+- ECS services (EC2 launch type):
   - `web`
   - `api`
   - `worker`
@@ -61,6 +79,7 @@ npx cdk deploy
   - `sandbox`
   - `plugin_daemon`
   - `ssrf_proxy`
+- Auto Scaling Group de EC2 com ECS Optimized AMI + ECS Capacity Provider
 - Aurora PostgreSQL Serverless v2 + criação de database `pgvector`
 - ElastiCache Valkey/Redis com TLS
 - Bucket S3 para storage do Dify e plugins
@@ -82,13 +101,20 @@ Se precisar complementar, use `app.additionalEnvironmentVariables` no JSON de co
 
 ## 7) Sizing inicial recomendado (5-8 simultâneos)
 
-- `web`: 0.5 vCPU / 1 GiB, min 1 max 2
-- `api`: 1 vCPU / 2 GiB, min 1 max 2
-- `worker`: 1 vCPU / 2 GiB, min 1 max 2
-- `worker_beat`: 0.25 vCPU / 0.5 GiB, fixo 1
-- `sandbox`: 0.5 vCPU / 1 GiB, fixo 1
-- `plugin_daemon`: 0.5 vCPU / 1 GiB, fixo 1
-- `ssrf_proxy`: 0.25 vCPU / 0.5 GiB, fixo 1
+- Cluster EC2: `m6i.large`, `min=2`, `desired=2`, `max=4`
+- Tasks:
+  - `web`: cpu 256 / 1 GiB, min 1 max 2
+  - `api`: cpu 512 / 2 GiB, min 1 max 2
+  - `worker`: cpu 512 / 2 GiB, min 1 max 2
+  - `worker_beat`: cpu 256 / 0.5 GiB, fixo 1
+  - `sandbox`: cpu 256 / 1 GiB, fixo 1
+  - `plugin_daemon`: cpu 256 / 1 GiB, fixo 1
+  - `ssrf_proxy`: cpu 256 / 0.5 GiB, fixo 1
+
+Observação:
+
+- esse sizing assume `awsvpcTrunking` habilitado
+- sem trunking, aumente instâncias do cluster para evitar saturação de ENI
 
 ## 8) Operação diária
 
@@ -108,5 +134,5 @@ Se precisar complementar, use `app.additionalEnvironmentVariables` no JSON de co
 ## 10) Observações importantes
 
 - `worker_beat` foi mantido separado para aderência ao seu fork.
-- Para reduzir custo inicial, você pode usar `capacityProvider = FARGATE_SPOT` apenas em ambiente não crítico.
-- Em produção crítica, prefira `FARGATE` normal para `api/web`.
+- Para reduzir custo de EC2, você pode habilitar `ecsEc2.useSpotInstances=true` no `production.json`.
+- Em produção crítica, mantenha `useSpotInstances=false` para evitar interrupções de tasks.
