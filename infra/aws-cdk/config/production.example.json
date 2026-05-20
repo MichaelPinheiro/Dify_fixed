@@ -1,0 +1,111 @@
+{
+  "appName": "dify-fork-prod",
+  "environment": {
+    "account": "123456789012",
+    "region": "us-east-1"
+  },
+  "network": {
+    "maxAzs": 2,
+    "natGateways": 1,
+    "allowedIpv4Cidrs": [
+      "0.0.0.0/0"
+    ]
+  },
+  "domain": {
+    "hostedZoneName": "example.com",
+    "subdomain": "dify"
+  },
+  "capacityProvider": "FARGATE",
+  "enableExecuteCommand": true,
+  "images": {
+    "api": "123456789012.dkr.ecr.us-east-1.amazonaws.com/dify-images:dify-api_fork-2026-05-20",
+    "web": "123456789012.dkr.ecr.us-east-1.amazonaws.com/dify-images:dify-web_fork-2026-05-20",
+    "sandbox": "langgenius/dify-sandbox:0.2.15",
+    "pluginDaemon": "langgenius/dify-plugin-daemon:0.6.0-local",
+    "ssrfProxy": "asset"
+  },
+  "storage": {
+    "forceDestroy": false,
+    "useManagedIamForS3": true
+  },
+  "database": {
+    "defaultDatabaseName": "main",
+    "pluginDatabaseName": "dify_plugin",
+    "pgvectorDatabaseName": "pgvector",
+    "minAcu": 0.5,
+    "maxAcu": 2,
+    "backupRetentionDays": 7,
+    "deletionProtection": true
+  },
+  "redis": {
+    "nodeType": "cache.t4g.small",
+    "multiAz": false,
+    "replicasPerNodeGroup": 0
+  },
+  "services": {
+    "web": {
+      "cpu": 512,
+      "memoryMiB": 1024,
+      "desiredCount": 1,
+      "minCount": 1,
+      "maxCount": 2
+    },
+    "api": {
+      "cpu": 1024,
+      "memoryMiB": 2048,
+      "desiredCount": 1,
+      "minCount": 1,
+      "maxCount": 2
+    },
+    "worker": {
+      "cpu": 1024,
+      "memoryMiB": 2048,
+      "desiredCount": 1,
+      "minCount": 1,
+      "maxCount": 2
+    },
+    "workerBeat": {
+      "cpu": 256,
+      "memoryMiB": 512,
+      "desiredCount": 1,
+      "minCount": 1,
+      "maxCount": 1
+    },
+    "sandbox": {
+      "cpu": 512,
+      "memoryMiB": 1024,
+      "desiredCount": 1,
+      "minCount": 1,
+      "maxCount": 1
+    },
+    "pluginDaemon": {
+      "cpu": 512,
+      "memoryMiB": 1024,
+      "desiredCount": 1,
+      "minCount": 1,
+      "maxCount": 1
+    },
+    "ssrfProxy": {
+      "cpu": 256,
+      "memoryMiB": 512,
+      "desiredCount": 1,
+      "minCount": 1,
+      "maxCount": 1
+    }
+  },
+  "app": {
+    "logLevel": "INFO",
+    "migrationEnabledOnApi": true,
+    "corsAllowOrigins": "*",
+    "enableMarketplace": true,
+    "textGenerationTimeoutMs": 600000,
+    "gunicornTimeoutSeconds": 360,
+    "celeryWorkerAmount": 2,
+    "celeryAutoScale": false,
+    "pluginMaxExecutionTimeoutSeconds": 600,
+    "additionalEnvironmentVariables": {
+      "DEPLOY_ENV": "PRODUCTION",
+      "CHECK_UPDATE_URL": "https://updates.dify.ai"
+    }
+  }
+}

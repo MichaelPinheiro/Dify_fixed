@@ -1,0 +1,25 @@
+{
+  "name": "dify-fork-aws-cdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-grade AWS CDK deployment for Dify fork on ECS/Fargate",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -w -p tsconfig.json",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy": "cdk deploy",
+    "destroy": "cdk destroy"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "aws-cdk": "^2.169.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.169.0",
+    "constructs": "^10.4.2"
+  }
+}
