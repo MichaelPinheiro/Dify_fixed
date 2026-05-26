@@ -28,17 +28,20 @@ Importante: por usar ECS on EC2 com `awsvpc`, habilite `awsvpcTrunking` na conta
 - `lib/config.ts`: schema de configuração
 - `lib/dify-ecs-production-stack.ts`: stack principal (ECS + EC2 capacity provider)
 - `config/production.example.json`: exemplo de configuração
+- `config/production.ci.json`: configuração usada no CI para `build/synth`
 - `scripts/push-fork-images.sh`: build/push das imagens do fork
 - `scripts/enable-awsvpc-trunking.sh`: habilita awsvpc trunking para aumentar task density
+- `scripts/deploy-production.sh`: deploy manual assistido (`validate -> build -> synth -> diff -> deploy`)
+- `scripts/validate-config.ts`: validação de configuração com defaults e regras de segurança
 - `docs/DEPLOY_ECS.md`: manual de deploy
 - `docs/COST_COMPARISON_ECS_VS_EC2.md`: comparativo de custo
 - `docs/TERRAFORM_MAPPING.md`: mapeamento de recursos para Terraform
+- `.github/workflows/infra-cdk-ci.yml`: CI de infra (`npm ci`, validações e `cdk synth`)
 
 ## Começo rápido
 
 ```bash
 cd infra/aws-cdk
-npm ci
 cp config/production.example.json config/production.json
 # editar config/production.json
 
@@ -49,11 +52,8 @@ TAG=fork-2026-05-20 REGION=us-east-1 REPO=dify-images ./infra/aws-cdk/scripts/pu
 # habilitar trunking para task density em ECS on EC2
 REGION=us-east-1 ./infra/aws-cdk/scripts/enable-awsvpc-trunking.sh
 
-# deploy
-cd infra/aws-cdk
-export DIFY_CDK_CONFIG=./config/production.json
-npx cdk bootstrap
-npx cdk deploy
+# deploy manual assistido
+./infra/aws-cdk/scripts/deploy-production.sh ./infra/aws-cdk/config/production.json
 ```
 
-Consulte `docs/DEPLOY_ECS.md` para o passo a passo completo.
+Consulte `docs/DEPLOY_ECS.md` para o passo a passo completo e checklist operacional.

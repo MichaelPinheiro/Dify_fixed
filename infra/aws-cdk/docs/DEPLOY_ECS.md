@@ -22,6 +22,10 @@ Edite `config/production.json` com:
 - `domain` (se tiver domínio público no Route53)
 - `images.api` e `images.web` para as imagens do seu fork no ECR
 - sizing dos serviços conforme carga inicial
+- `network.allowPublicIngress=true` **somente** se realmente precisar expor para `0.0.0.0/0`
+- `app.allowWildcardCors=true` **somente** se realmente precisar de `corsAllowOrigins="*"`
+- `database.pluginDbSslMode` (recomendado: `require`)
+- `redis.sslCertReqs` (recomendado: `CERT_REQUIRED`)
 
 ## 3) Build e push das imagens do fork
 
@@ -36,14 +40,18 @@ Depois atualize no `config/production.json`:
 - `images.api = <ECR>/dify-images:dify-api_<TAG>`
 - `images.web = <ECR>/dify-images:dify-web_<TAG>`
 
-## 4) Deploy CDK
+## 4) Deploy CDK (fluxo recomendado)
+
+```bash
+./infra/aws-cdk/scripts/deploy-production.sh ./infra/aws-cdk/config/production.json
+```
+
+Se for o primeiro deploy da conta/região, rode antes:
 
 ```bash
 cd infra/aws-cdk
-npm ci
 export DIFY_CDK_CONFIG=./config/production.json
 npx cdk bootstrap
-npx cdk deploy
 ```
 
 ## 4.1) Importante: limite de tasks por ENI (ECS on EC2 + `awsvpc`)
@@ -93,11 +101,21 @@ A stack já define automaticamente os principais envs de produção, incluindo:
 - `S3_USE_AWS_MANAGED_IAM=true`
 - `VECTOR_STORE=pgvector`
 - `REDIS_USE_SSL=true`
+- `REDIS_SSL_CERT_REQS` (default: `CERT_REQUIRED`)
 - `CELERY_BROKER_URL=rediss://...`
 - `PLUGIN_STORAGE_TYPE=aws_s3`
 - `MODE` correto para `api`, `worker` e `worker_beat`
 
 Se precisar complementar, use `app.additionalEnvironmentVariables` no JSON de config.
+
+## 6.1) Regras de validação automática
+
+A validação falha se:
+
+- `network.allowedIpv4Cidrs` vier vazio
+- `0.0.0.0/0` for usado sem `network.allowPublicIngress=true`
+- `corsAllowOrigins="*"` for usado sem `app.allowWildcardCors=true`
+- qualquer serviço quebrar `minCount <= desiredCount <= maxCount`
 
 ## 7) Sizing inicial recomendado (5-8 simultâneos)
 
@@ -136,3 +154,4 @@ Observação:
 - `worker_beat` foi mantido separado para aderência ao seu fork.
 - Para reduzir custo de EC2, você pode habilitar `ecsEc2.useSpotInstances=true` no `production.json`.
 - Em produção crítica, mantenha `useSpotInstances=false` para evitar interrupções de tasks.
+- `api`, `worker` e `web` usam deployment circuit breaker com rollback automático.

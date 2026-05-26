@@ -155,13 +155,35 @@ export class DifyEcsProductionStack extends cdk.Stack {
       return resource;
     };
 
-    const createPgVectorDb = runSql(
+    const runSqlOnCreateOnly = (idSuffix: string, sql: string, database?: string): AwsCustomResource => {
+      const resource = new AwsCustomResource(this, idSuffix, {
+        onCreate: {
+          service: 'rds-data',
+          action: 'ExecuteStatement',
+          parameters: {
+            resourceArn: postgres.clusterArn,
+            secretArn: postgres.secret!.secretArn,
+            database,
+            sql,
+          },
+          physicalResourceId: PhysicalResourceId.of(`${idSuffix}-${cfg.appName}`),
+        },
+        policy: AwsCustomResourcePolicy.fromSdkCalls({
+          resources: [postgres.clusterArn, `${postgres.clusterArn}:*`],
+        }),
+      });
+      postgres.secret!.grantRead(resource);
+      postgres.grantDataApiAccess(resource);
+      return resource;
+    };
+
+    const createPgVectorDb = runSqlOnCreateOnly(
       'CreatePgVectorDatabase',
       `CREATE DATABASE ${cfg.database.pgvectorDatabaseName};`,
       cfg.database.defaultDatabaseName,
     );
 
-    const createPluginDb = runSql(
+    const createPluginDb = runSqlOnCreateOnly(
       'CreatePluginDatabase',
       `CREATE DATABASE ${cfg.database.pluginDatabaseName};`,
       cfg.database.defaultDatabaseName,
@@ -207,7 +229,7 @@ export class DifyEcsProductionStack extends cdk.Stack {
     const redisPort = 6379;
 
     const celeryBrokerUrl = new ssm.StringParameter(this, 'CeleryBrokerUrl', {
-      stringValue: `rediss://:${redisAuthToken.secretValue.unsafeUnwrap()}@${redisEndpoint}:${redisPort}/1?ssl_cert_reqs=optional`,
+      stringValue: `rediss://:${redisAuthToken.secretValue.unsafeUnwrap()}@${redisEndpoint}:${redisPort}/1`,
     });
 
     const cluster = new ecs.Cluster(this, 'Cluster', {
@@ -382,6 +404,7 @@ export class DifyEcsProductionStack extends cdk.Stack {
       REDIS_HOST: redisEndpoint,
       REDIS_PORT: redisPort.toString(),
       REDIS_USE_SSL: 'true',
+      REDIS_SSL_CERT_REQS: cfg.redis.sslCertReqs,
       REDIS_DB: '0',
       CELERY_BACKEND: 'redis',
       WEB_API_CORS_ALLOW_ORIGINS: cfg.app.corsAllowOrigins,
@@ -458,6 +481,9 @@ export class DifyEcsProductionStack extends cdk.Stack {
       taskDefinition: ecs.Ec2TaskDefinition,
       sizing: ServiceSizing,
       cloudMapName: string,
+      options?: {
+        enableCircuitBreaker?: boolean;
+      },
     ): ecs.Ec2Service => {
       return new ecs.Ec2Service(this, `${id}Service`, {
         cluster,
@@ -476,6 +502,11 @@ export class DifyEcsProductionStack extends cdk.Stack {
           cloudMapNamespace: namespace,
           name: cloudMapName,
         },
+        circuitBreaker: options?.enableCircuitBreaker
+          ? {
+              rollback: true,
+            }
+          : undefined,
       });
     };
 
@@ -518,7 +549,9 @@ export class DifyEcsProductionStack extends cdk.Stack {
     });
     apiContainer.addPortMappings({ containerPort: 5001 });
 
-    const apiService = createService('Api', apiTask, cfg.services.api, 'api');
+    const apiService = createService('Api', apiTask, cfg.services.api, 'api', {
+      enableCircuitBreaker: true,
+    });
     storageBucket.grantReadWrite(apiTask.taskRole);
     postgres.connections.allowDefaultPortFrom(apiService);
 
@@ -536,7 +569,9 @@ export class DifyEcsProductionStack extends cdk.Stack {
       logging: makeAwsLogs('worker'),
     });
 
-    const workerService = createService('Worker', workerTask, cfg.services.worker, 'worker');
+    const workerService = createService('Worker', workerTask, cfg.services.worker, 'worker', {
+      enableCircuitBreaker: true,
+    });
     storageBucket.grantReadWrite(workerTask.taskRole);
     postgres.connections.allowDefaultPortFrom(workerService);
 
@@ -595,10 +630,11 @@ export class DifyEcsProductionStack extends cdk.Stack {
       environment: {
         LOG_OUTPUT_FORMAT: 'text',
         DB_DATABASE: cfg.database.pluginDatabaseName,
-        DB_SSL_MODE: 'disable',
+        DB_SSL_MODE: cfg.database.pluginDbSslMode,
         REDIS_HOST: redisEndpoint,
         REDIS_PORT: redisPort.toString(),
         REDIS_USE_SSL: 'true',
+        REDIS_SSL_CERT_REQS: cfg.redis.sslCertReqs,
         SERVER_PORT: '5002',
         DIFY_INNER_API_URL: apiInternalUrl,
         PLUGIN_STORAGE_TYPE: 'aws_s3',
@@ -686,7 +722,9 @@ export class DifyEcsProductionStack extends cdk.Stack {
     });
     webContainer.addPortMappings({ containerPort: 3000 });
 
-    const webService = createService('Web', webTask, cfg.services.web, 'web');
+    const webService = createService('Web', webTask, cfg.services.web, 'web', {
+      enableCircuitBreaker: true,
+    });
     storageBucket.grantReadWrite(webTask.taskRole);
 
     const webTarget = new elbv2.ApplicationTargetGroup(this, 'WebTargetGroup', {

@@ -1,7 +1,7 @@
 {
-  "appName": "dify-fork-prod",
+  "appName": "dify-fork-ci",
   "environment": {
-    "account": "123456789012",
+    "account": "111111111111",
     "region": "us-east-1"
   },
   "network": {
@@ -9,24 +9,20 @@
     "natGateways": 1,
     "allowPublicIngress": false,
     "allowedIpv4Cidrs": [
-      "203.0.113.0/24"
+      "10.0.0.0/8"
     ]
   },
-  "domain": {
-    "hostedZoneName": "example.com",
-    "subdomain": "dify"
-  },
-  "enableExecuteCommand": true,
+  "enableExecuteCommand": false,
   "ecsEc2": {
     "instanceType": "m6i.large",
     "desiredInstances": 2,
-    "minInstances": 2,
-    "maxInstances": 4,
+    "minInstances": 1,
+    "maxInstances": 3,
     "useSpotInstances": false
   },
   "images": {
-    "api": "123456789012.dkr.ecr.us-east-1.amazonaws.com/dify-images:dify-api_fork-2026-05-20",
-    "web": "123456789012.dkr.ecr.us-east-1.amazonaws.com/dify-images:dify-web_fork-2026-05-20",
+    "api": "111111111111.dkr.ecr.us-east-1.amazonaws.com/dify-images:dify-api_ci",
+    "web": "111111111111.dkr.ecr.us-east-1.amazonaws.com/dify-images:dify-web_ci",
     "sandbox": "langgenius/dify-sandbox:0.2.15",
     "pluginDaemon": "langgenius/dify-plugin-daemon:0.6.0-local",
     "ssrfProxy": "asset"
@@ -106,16 +102,12 @@
     "logLevel": "INFO",
     "migrationEnabledOnApi": true,
     "allowWildcardCors": false,
-    "corsAllowOrigins": "https://dify.example.com",
+    "corsAllowOrigins": "https://ci.example.com",
     "enableMarketplace": true,
     "textGenerationTimeoutMs": 600000,
     "gunicornTimeoutSeconds": 360,
     "celeryWorkerAmount": 2,
     "celeryAutoScale": false,
-    "pluginMaxExecutionTimeoutSeconds": 600,
-    "additionalEnvironmentVariables": {
-      "DEPLOY_ENV": "PRODUCTION",
-      "CHECK_UPDATE_URL": "https://updates.dify.ai"
-    }
+    "pluginMaxExecutionTimeoutSeconds": 600
   }
 }

@@ -1,0 +1,78 @@
+name: Infra CDK CI
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "infra/aws-cdk/**"
+      - ".github/workflows/infra-cdk-ci.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "infra/aws-cdk/**"
+      - ".github/workflows/infra-cdk-ci.yml"
+
+concurrency:
+  group: infra-cdk-ci-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  synth-and-validate:
+    name: Synth and Validate
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: infra/aws-cdk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: infra/aws-cdk/package-lock.json
+
+      - name: Ensure lockfile exists
+        run: |
+          if [[ ! -f package-lock.json ]]; then
+            npm install --package-lock-only
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate CI config
+        run: npm run validate-config -- ./config/production.ci.json
+
+      - name: Build CDK app
+        run: npm run build
+
+      - name: Validate unsafe config rejections
+        run: |
+          cp ./config/production.ci.json /tmp/cdk-invalid-public.json
+          node -e 'const fs=require("fs");const p="/tmp/cdk-invalid-public.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.network.allowedIpv4Cidrs=["0.0.0.0/0"];fs.writeFileSync(p,JSON.stringify(c,null,2));'
+          if npm run validate-config -- /tmp/cdk-invalid-public.json; then
+            echo "expected validation failure for public CIDR without opt-in" >&2
+            exit 1
+          fi
+
+          cp ./config/production.ci.json /tmp/cdk-invalid-cors.json
+          node -e 'const fs=require("fs");const p="/tmp/cdk-invalid-cors.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.app.corsAllowOrigins="*";c.app.allowWildcardCors=false;fs.writeFileSync(p,JSON.stringify(c,null,2));'
+          if npm run validate-config -- /tmp/cdk-invalid-cors.json; then
+            echo "expected validation failure for wildcard CORS without opt-in" >&2
+            exit 1
+          fi
+
+          cp ./config/production.ci.json /tmp/cdk-invalid-sizing.json
+          node -e 'const fs=require("fs");const p="/tmp/cdk-invalid-sizing.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.services.api.minCount=3;c.services.api.desiredCount=2;c.services.api.maxCount=4;fs.writeFileSync(p,JSON.stringify(c,null,2));'
+          if npm run validate-config -- /tmp/cdk-invalid-sizing.json; then
+            echo "expected validation failure for invalid service sizing" >&2
+            exit 1
+          fi
+
+      - name: CDK synth
+        env:
+          DIFY_CDK_CONFIG: ./config/production.ci.json
+        run: npx cdk synth

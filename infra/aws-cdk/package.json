@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "watch": "tsc -w -p tsconfig.json",
+    "validate-config": "ts-node --project tsconfig.json scripts/validate-config.ts",
     "cdk": "cdk",
     "synth": "cdk synth",
     "diff": "cdk diff",
