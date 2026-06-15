@@ -121,3 +121,102 @@ def test_check_is_synced_validation():
                 )
             ],
         )
+
+
+def test_ensure_input_contract_compatible_allows_same_contract_with_equivalent_types():
+    previous_variables = [
+        VariableEntity(
+            variable="query",
+            label="Query",
+            type=VariableEntityType.TEXT_INPUT,
+            required=True,
+        )
+    ]
+    current_variables = [
+        VariableEntity(
+            variable="query",
+            label="Query",
+            type=VariableEntityType.PARAGRAPH,
+            required=True,
+        )
+    ]
+
+    WorkflowToolConfigurationUtils.ensure_input_contract_compatible(
+        previous_variables=previous_variables,
+        current_variables=current_variables,
+    )
+
+
+def test_ensure_input_contract_compatible_raises_when_required_changes():
+    previous_variables = [
+        VariableEntity(
+            variable="query",
+            label="Query",
+            type=VariableEntityType.TEXT_INPUT,
+            required=True,
+        )
+    ]
+    current_variables = [
+        VariableEntity(
+            variable="query",
+            label="Query",
+            type=VariableEntityType.TEXT_INPUT,
+            required=False,
+        )
+    ]
+
+    with pytest.raises(ValueError, match="required flag changed"):
+        WorkflowToolConfigurationUtils.ensure_input_contract_compatible(
+            previous_variables=previous_variables,
+            current_variables=current_variables,
+        )
+
+
+def test_ensure_input_contract_compatible_raises_when_type_changes():
+    previous_variables = [
+        VariableEntity(
+            variable="query",
+            label="Query",
+            type=VariableEntityType.TEXT_INPUT,
+            required=True,
+        )
+    ]
+    current_variables = [
+        VariableEntity(
+            variable="query",
+            label="Query",
+            type=VariableEntityType.NUMBER,
+            required=True,
+        )
+    ]
+
+    with pytest.raises(ValueError, match="type changed"):
+        WorkflowToolConfigurationUtils.ensure_input_contract_compatible(
+            previous_variables=previous_variables,
+            current_variables=current_variables,
+        )
+
+
+def test_ensure_input_contract_compatible_raises_when_variable_set_changes():
+    previous_variables = [
+        VariableEntity(
+            variable="query",
+            label="Query",
+            type=VariableEntityType.TEXT_INPUT,
+            required=True,
+        )
+    ]
+    current_variables = [
+        VariableEntity(
+            variable="question",
+            label="Question",
+            type=VariableEntityType.TEXT_INPUT,
+            required=True,
+        )
+    ]
+
+    with pytest.raises(ValueError, match="variable set changed"):
+        WorkflowToolConfigurationUtils.ensure_input_contract_compatible(
+            previous_variables=previous_variables,
+            current_variables=current_variables,
+        )

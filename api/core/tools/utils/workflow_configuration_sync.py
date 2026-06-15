@@ -1,11 +1,22 @@
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from core.tools.entities.tool_entities import WorkflowToolParameterConfiguration
+from core.tools.entities.tool_entities import ToolParameter, WorkflowToolParameterConfiguration
 from core.tools.errors import WorkflowToolHumanInputNotSupportedError
 from graphon.enums import BuiltinNodeTypes
 from graphon.nodes.base.entities import OutputVariableEntity
-from graphon.variables.input_entities import VariableEntity
+from graphon.variables.input_entities import VariableEntity, VariableEntityType
+
+VARIABLE_TO_PARAMETER_TYPE_MAPPING = {
+    VariableEntityType.TEXT_INPUT: ToolParameter.ToolParameterType.STRING,
+    VariableEntityType.PARAGRAPH: ToolParameter.ToolParameterType.STRING,
+    VariableEntityType.SELECT: ToolParameter.ToolParameterType.SELECT,
+    VariableEntityType.NUMBER: ToolParameter.ToolParameterType.NUMBER,
+    VariableEntityType.CHECKBOX: ToolParameter.ToolParameterType.BOOLEAN,
+    VariableEntityType.FILE: ToolParameter.ToolParameterType.FILE,
+    VariableEntityType.FILE_LIST: ToolParameter.ToolParameterType.FILES,
+    VariableEntityType.JSON_OBJECT: ToolParameter.ToolParameterType.OBJECT,
+}
 
 
 class WorkflowToolConfigurationUtils:
@@ -69,3 +80,33 @@ class WorkflowToolConfigurationUtils:
         for parameter in tool_configurations:
             if parameter.name not in variable_names:
                 raise ValueError("parameter configuration mismatch, please republish the tool to update")
+
+    @classmethod
+    def ensure_input_contract_compatible(
+        cls, *, previous_variables: Sequence[VariableEntity], current_variables: Sequence[VariableEntity]
+    ) -> None:
+        """
+        Ensure workflow input contract compatibility across published versions.
+
+        The contract is considered compatible only when all parameters keep:
+        - the same variable name set
+        - the same required flag
+        - the same mapped tool parameter type
+        """
+
+        previous_by_name = {variable.variable: variable for variable in previous_variables}
+        current_by_name = {variable.variable: variable for variable in current_variables}
+
+        if set(previous_by_name) != set(current_by_name):
+            raise ValueError("input variable set changed, please reconfigure workflow tool")
+
+        for variable_name, previous_variable in previous_by_name.items():
+            current_variable = current_by_name[variable_name]
+            previous_type = VARIABLE_TO_PARAMETER_TYPE_MAPPING.get(previous_variable.type)
+            current_type = VARIABLE_TO_PARAMETER_TYPE_MAPPING.get(current_variable.type)
+            if previous_type is None or current_type is None:
+                raise ValueError("unsupported variable type change, please reconfigure workflow tool")
+            if previous_type != current_type:
+                raise ValueError("input variable type changed, please reconfigure workflow tool")
+            if previous_variable.required != current_variable.required:
+                raise ValueError("input variable required flag changed, please reconfigure workflow tool")

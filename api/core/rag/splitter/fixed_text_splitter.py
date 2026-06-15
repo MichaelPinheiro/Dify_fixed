@@ -59,14 +59,26 @@ class FixedRecursiveCharacterTextSplitter(EnhanceRecursiveCharacterTextSplitter)
             chunks = [text]
 
         final_chunks = []
+        final_lengths: list[int] = []
         chunks_lengths = self._length_function(chunks)
         for chunk, chunk_length in zip(chunks, chunks_lengths):
             if chunk_length > self._chunk_size:
-                final_chunks.extend(self.recursive_split_text(chunk))
+                split_chunks = self.recursive_split_text(chunk)
+                split_chunks_lengths = self._length_function(split_chunks)
+                final_chunks.extend(split_chunks)
+                final_lengths.extend(split_chunks_lengths)
             else:
+                # Keep separator-first semantics, then merge smaller units below.
                 final_chunks.append(chunk)
+                final_lengths.append(chunk_length)
 
-        return final_chunks
+        if not final_chunks:
+            return []
+
+        # Buffer-first merge to avoid over-segmentation while preserving overlap.
+        # This keeps chunks close to target size whenever possible.
+        merge_separator = self._fixed_separator if self._fixed_separator else ""
+        return self._merge_splits(final_chunks, merge_separator, final_lengths)
 
     def recursive_split_text(self, text: str) -> list[str]:
         """Split incoming text and return chunks."""

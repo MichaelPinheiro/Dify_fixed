@@ -126,6 +126,33 @@ def test_workflow_tool_should_raise_tool_invoke_error_when_result_has_error_fiel
     assert exc_info.value.args == ("oops",)
 
 
+def test_workflow_tool_should_annotate_outdated_tool_not_found_error(monkeypatch: pytest.MonkeyPatch):
+    tool = _build_tool()
+
+    app = SimpleNamespace(workflow_id="new-workflow-id")
+    workflow = SimpleNamespace(id="old-workflow-id")
+
+    monkeypatch.setattr(tool, "_get_app", lambda *args, **kwargs: app)
+    monkeypatch.setattr(tool, "_get_workflow", lambda *args, **kwargs: workflow)
+    monkeypatch.setattr(tool, "_resolve_user", lambda *args, **kwargs: Mock())
+
+    monkeypatch.setattr(
+        "core.app.apps.workflow.app_generator.WorkflowAppGenerator.generate",
+        lambda *args, **kwargs: {
+            "data": {
+                "error": "tool invoke error: request failed: tool ConsultarResumoOperacaoMaquinas not found",
+            }
+        },
+    )
+
+    with pytest.raises(ToolInvokeError) as exc_info:
+        list(tool.invoke("test_user", {}))
+
+    message = str(exc_info.value)
+    assert "ConsultarResumoOperacaoMaquinas not found" in message
+    assert "Workflow tool version is outdated for this app" in message
+
+
 def test_workflow_tool_does_not_use_pause_state_config(monkeypatch: pytest.MonkeyPatch):
     """Ensure pause_state_config is passed as None."""
     tool = _build_tool()
