@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Generator, Mapping, Sequence
 from typing import Any, cast
 
@@ -29,6 +30,7 @@ from models.workflow import Workflow
 
 logger = logging.getLogger(__name__)
 _file_access_controller = DatabaseFileAccessController()
+_WORKFLOW_TOOL_NOT_FOUND_ERROR_PATTERN = re.compile(r"tool\s+.+?\s+not found", re.IGNORECASE)
 
 
 class WorkflowTool(Tool):
@@ -111,7 +113,13 @@ class WorkflowTool(Tool):
         data = result.get("data", {})
 
         if err := data.get("error"):
-            raise ToolInvokeError(err)
+            err_text = str(err)
+            if self._should_annotate_outdated_tool_error(app=app, workflow=workflow, error_message=err_text):
+                err_text = (
+                    f"{err_text}. Workflow tool version is outdated for this app. "
+                    "Reconfigure and save the workflow tool in Tools."
+                )
+            raise ToolInvokeError(err_text)
 
         outputs = data.get("outputs")
         if outputs is None:
@@ -204,6 +212,17 @@ class WorkflowTool(Tool):
             version=self.version,
             label=self.label,
         )
+
+    @classmethod
+    def _should_annotate_outdated_tool_error(cls, *, app: App, workflow: Workflow, error_message: str) -> bool:
+        """
+        Return True when error likely comes from an outdated workflow-tool version.
+        """
+        if not _WORKFLOW_TOOL_NOT_FOUND_ERROR_PATTERN.search(error_message):
+            return False
+        if not app.workflow_id:
+            return False
+        return str(app.workflow_id) != str(workflow.id)
 
     def _resolve_user(self, user_id: str) -> Account | EndUser | None:
         """

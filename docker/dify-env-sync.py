@@ -12,6 +12,7 @@
 # ================================================================
 
 import argparse
+import os
 import re
 import shutil
 import sys
@@ -371,6 +372,59 @@ def show_statistics(work_dir: Path) -> None:
     log_info(f"  .env environment variables: {env_count}")
 
 
+def detect_host_environment_overrides(env_vars: dict[str, str]) -> dict[str, tuple[str, str]]:
+    """Detect host env vars that would override values from the local .env.
+
+    Docker Compose interpolation gives precedence to environment variables from
+    the current shell. This means values exported in the host can silently
+    override values in ``docker/.env``.
+
+    Args:
+        env_vars: Parsed key/value pairs from .env.
+
+    Returns:
+        Mapping of key -> (host_value, env_file_value) for conflicting entries.
+    """
+    log_info("Checking host environment overrides for Docker Compose...")
+
+    overrides: dict[str, tuple[str, str]] = {}
+    for key, env_value in env_vars.items():
+        host_value = os.environ.get(key)
+        if host_value is None:
+            continue
+        if host_value != env_value:
+            overrides[key] = (host_value, env_value)
+
+    if not overrides:
+        log_success("No host environment overrides detected")
+        return overrides
+
+    log_warning(
+        f"Detected {len(overrides)} host environment variable(s) that override docker/.env in docker compose:"
+    )
+
+    for key in sorted(overrides):
+        host_value, env_value = overrides[key]
+        log_warning(f"  - {key}: host='{host_value}' vs .env='{env_value}'")
+
+    risky_keys = {"DEBUG", "FLASK_DEBUG", "DEPLOY_ENV", "LOG_LEVEL"}
+    risky_overrides = sorted(risky_keys.intersection(overrides))
+    if risky_overrides:
+        log_warning(
+            "High-risk overrides detected: "
+            + ", ".join(risky_overrides)
+            + " (these can break API startup or runtime behavior)"
+        )
+
+    unset_flags = " ".join(f"-u {key}" for key in sorted(overrides))
+    log_info("To run compose without host overrides, use:")
+    log_info(f"  env {unset_flags} docker compose up -d")
+    log_info("Or unset in your shell before compose:")
+    log_info("  unset " + " ".join(sorted(overrides)))
+
+    return overrides
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build and return the CLI argument parser.
 
@@ -440,6 +494,10 @@ def main() -> None:
 
     # 7. Print summary statistics
     show_statistics(work_dir)
+
+    # 8. Detect host exported variables that override .env values in compose
+    final_env_vars = parse_env_file(work_dir / ".env")
+    detect_host_environment_overrides(final_env_vars)
 
     log_success("=== Synchronization process completed successfully ===")
     log_info(f"Execution finished: {datetime.now()}")

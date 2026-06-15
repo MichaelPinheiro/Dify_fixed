@@ -9,6 +9,9 @@ from .delete_tool_parameters_cache_when_sync_draft_workflow import (
 from .queue_credential_sync_when_tenant_created import handle as handle_queue_credential_sync_when_tenant_created
 from .sync_plugin_trigger_when_app_created import handle as handle_sync_plugin_trigger_when_app_created
 from .sync_webhook_when_app_created import handle as handle_sync_webhook_when_app_created
+from .sync_workflow_tool_version_when_app_published import (
+    handle as handle_sync_workflow_tool_version_when_app_published,
+)
 from .sync_workflow_schedule_when_app_published import handle as handle_sync_workflow_schedule_when_app_published
 from .update_app_dataset_join_when_app_model_config_updated import (
     handle as handle_update_app_dataset_join_when_app_model_config_updated,
@@ -34,6 +37,7 @@ __all__ = [
     "handle_queue_credential_sync_when_tenant_created",
     "handle_sync_plugin_trigger_when_app_created",
     "handle_sync_webhook_when_app_created",
+    "handle_sync_workflow_tool_version_when_app_published",
     "handle_sync_workflow_schedule_when_app_published",
     "handle_update_app_dataset_join_when_app_model_config_updated",
     "handle_update_app_dataset_join_when_app_published_workflow_updated",
